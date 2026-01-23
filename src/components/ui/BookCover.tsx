@@ -10,7 +10,7 @@ interface BookCoverProps {
 const sizeStyles = {
   sm: 'w-28 h-36',
   md: 'w-40 h-52',
-  lg: 'w-56 h-72',
+  lg: 'w-full aspect-[3/4] max-w-56',
 }
 
 // Richer color palette with depth

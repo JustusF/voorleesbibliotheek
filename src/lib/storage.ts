@@ -5,6 +5,102 @@ import type { Book, Chapter, Recording, User } from '../types'
 export const isSupabaseConfigured = supabaseConfigured
 
 // ============================================
+// ERROR HANDLING & RETRY UTILITIES
+// ============================================
+
+interface RetryOptions {
+  maxRetries?: number
+  delayMs?: number
+  onRetry?: (attempt: number, error: Error) => void
+}
+
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  options: RetryOptions = {}
+): Promise<T> {
+  const { maxRetries = 3, delayMs = 1000, onRetry } = options
+  let lastError: Error | null = null
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn()
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error))
+
+      if (attempt < maxRetries) {
+        onRetry?.(attempt, lastError)
+        await new Promise((resolve) => setTimeout(resolve, delayMs * attempt))
+      }
+    }
+  }
+
+  throw lastError
+}
+
+// Queue for offline operations to sync later
+interface PendingOperation {
+  id: string
+  table: string
+  operation: 'insert' | 'update' | 'delete'
+  data: Record<string, unknown>
+  timestamp: string
+}
+
+const PENDING_OPS_KEY = 'voorleesbibliotheek_pending_ops'
+
+function getPendingOperations(): PendingOperation[] {
+  try {
+    const stored = localStorage.getItem(PENDING_OPS_KEY)
+    return stored ? JSON.parse(stored) : []
+  } catch {
+    return []
+  }
+}
+
+function addPendingOperation(op: Omit<PendingOperation, 'id' | 'timestamp'>): void {
+  const operations = getPendingOperations()
+  operations.push({
+    ...op,
+    id: crypto.randomUUID(),
+    timestamp: new Date().toISOString(),
+  })
+  localStorage.setItem(PENDING_OPS_KEY, JSON.stringify(operations))
+}
+
+function clearPendingOperation(id: string): void {
+  const operations = getPendingOperations().filter((op) => op.id !== id)
+  localStorage.setItem(PENDING_OPS_KEY, JSON.stringify(operations))
+}
+
+// Process pending operations when back online
+export async function processPendingOperations(): Promise<{ success: number; failed: number }> {
+  if (!isSupabaseConfigured || !supabase) return { success: 0, failed: 0 }
+
+  const operations = getPendingOperations()
+  let success = 0
+  let failed = 0
+
+  for (const op of operations) {
+    try {
+      if (op.operation === 'insert') {
+        await supabase.from(op.table).insert(op.data)
+      } else if (op.operation === 'update') {
+        await supabase.from(op.table).update(op.data).eq('id', op.data.id)
+      } else if (op.operation === 'delete') {
+        await supabase.from(op.table).delete().eq('id', op.data.id)
+      }
+      clearPendingOperation(op.id)
+      success++
+    } catch (error) {
+      console.error(`Failed to process pending operation ${op.id}:`, error)
+      failed++
+    }
+  }
+
+  return { success, failed }
+}
+
+// ============================================
 // LOCAL STORAGE FALLBACK (when Supabase is not configured)
 // ============================================
 
@@ -59,15 +155,35 @@ function saveToStorage<T>(key: string, data: T): void {
 
 export async function getBooksAsync(): Promise<Book[]> {
   if (isSupabaseConfigured && supabase) {
-    const { data, error } = await supabase
-      .from('books')
-      .select('*')
-      .order('created_at', { ascending: false })
-    if (error) {
+    const sb = supabase // Capture for closure
+    try {
+      const result = await withRetry(
+        async () => {
+          const { data, error } = await sb
+            .from('books')
+            .select('*')
+            .order('created_at', { ascending: false })
+          if (error) throw error
+          return data
+        },
+        {
+          maxRetries: 2,
+          delayMs: 500,
+          onRetry: (attempt, error) => {
+            console.warn(`[getBooksAsync] Retry ${attempt} after error:`, error.message)
+          },
+        }
+      )
+      // Also update local storage for offline access
+      if (result && result.length > 0) {
+        saveToStorage(STORAGE_KEYS.books, result)
+      }
+      return result || []
+    } catch (error) {
       console.error('Error fetching books:', error)
-      return []
+      // Fallback to local storage
+      return loadFromStorage(STORAGE_KEYS.books, [])
     }
-    return data || []
   }
   return loadFromStorage(STORAGE_KEYS.books, [])
 }
@@ -125,10 +241,17 @@ export function addBook(title: string, author?: string, coverUrl?: string): Book
   books.push(newBook)
   saveToStorage(STORAGE_KEYS.books, books)
 
-  // Also save to Supabase asynchronously
+  // Save to Supabase asynchronously, queue if fails
   if (isSupabaseConfigured && supabase) {
     supabase.from('books').insert(newBook).then(({ error }) => {
-      if (error) console.error('Error syncing book to Supabase:', error)
+      if (error) {
+        console.error('Error syncing book to Supabase:', error)
+        addPendingOperation({
+          table: 'books',
+          operation: 'insert',
+          data: newBook as unknown as Record<string, unknown>,
+        })
+      }
     })
   }
 
@@ -167,7 +290,14 @@ export function updateBook(id: string, updates: Partial<Book>): Book | null {
 
   if (isSupabaseConfigured && supabase) {
     supabase.from('books').update(updates).eq('id', id).then(({ error }) => {
-      if (error) console.error('Error syncing book update to Supabase:', error)
+      if (error) {
+        console.error('Error syncing book update to Supabase:', error)
+        addPendingOperation({
+          table: 'books',
+          operation: 'update',
+          data: { id, ...updates } as unknown as Record<string, unknown>,
+        })
+      }
     })
   }
 
@@ -194,7 +324,14 @@ export function deleteBook(id: string): void {
 
   if (isSupabaseConfigured && supabase) {
     supabase.from('books').delete().eq('id', id).then(({ error }) => {
-      if (error) console.error('Error syncing book deletion to Supabase:', error)
+      if (error) {
+        console.error('Error syncing book deletion to Supabase:', error)
+        addPendingOperation({
+          table: 'books',
+          operation: 'delete',
+          data: { id },
+        })
+      }
     })
   }
 }
@@ -515,15 +652,35 @@ export function deleteRecording(id: string): void {
 
 export async function getUsersAsync(): Promise<User[]> {
   if (isSupabaseConfigured && supabase) {
-    const { data, error } = await supabase
-      .from('users')
-      .select('*')
-      .order('name', { ascending: true })
-    if (error) {
+    const sb = supabase // Capture for closure
+    try {
+      const result = await withRetry(
+        async () => {
+          const { data, error } = await sb
+            .from('users')
+            .select('*')
+            .order('name', { ascending: true })
+          if (error) throw error
+          return data
+        },
+        {
+          maxRetries: 2,
+          delayMs: 500,
+          onRetry: (attempt, error) => {
+            console.warn(`[getUsersAsync] Retry ${attempt} after error:`, error.message)
+          },
+        }
+      )
+      // Also update local storage for offline access
+      if (result && result.length > 0) {
+        saveToStorage(STORAGE_KEYS.users, result)
+      }
+      return result || defaultUsers
+    } catch (error) {
       console.error('Error fetching users:', error)
-      return defaultUsers
+      // Fallback to local storage
+      return loadFromStorage(STORAGE_KEYS.users, defaultUsers)
     }
-    return data || defaultUsers
   }
   return loadFromStorage(STORAGE_KEYS.users, defaultUsers)
 }
@@ -676,6 +833,128 @@ export function saveChapterProgress(
   }
 }
 
+// ============================================
+// REALTIME SUBSCRIPTIONS
+// ============================================
+
+type RealtimeCallback<T> = (payload: { new: T; old: T | null; eventType: 'INSERT' | 'UPDATE' | 'DELETE' }) => void
+
+export function subscribeToBooks(callback: RealtimeCallback<Book>): (() => void) | null {
+  if (!isSupabaseConfigured || !supabase) return null
+
+  const sb = supabase // Capture for closure
+  const channel = sb
+    .channel('books-changes')
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'books' },
+      (payload) => {
+        callback({
+          new: payload.new as Book,
+          old: payload.old as Book | null,
+          eventType: payload.eventType as 'INSERT' | 'UPDATE' | 'DELETE',
+        })
+      }
+    )
+    .subscribe()
+
+  return () => {
+    sb.removeChannel(channel)
+  }
+}
+
+export function subscribeToChapters(callback: RealtimeCallback<Chapter>): (() => void) | null {
+  if (!isSupabaseConfigured || !supabase) return null
+
+  const sb = supabase // Capture for closure
+  const channel = sb
+    .channel('chapters-changes')
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'chapters' },
+      (payload) => {
+        callback({
+          new: payload.new as Chapter,
+          old: payload.old as Chapter | null,
+          eventType: payload.eventType as 'INSERT' | 'UPDATE' | 'DELETE',
+        })
+      }
+    )
+    .subscribe()
+
+  return () => {
+    sb.removeChannel(channel)
+  }
+}
+
+export function subscribeToRecordings(callback: RealtimeCallback<Recording>): (() => void) | null {
+  if (!isSupabaseConfigured || !supabase) return null
+
+  const sb = supabase // Capture for closure
+  const channel = sb
+    .channel('recordings-changes')
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'recordings' },
+      (payload) => {
+        callback({
+          new: payload.new as Recording,
+          old: payload.old as Recording | null,
+          eventType: payload.eventType as 'INSERT' | 'UPDATE' | 'DELETE',
+        })
+      }
+    )
+    .subscribe()
+
+  return () => {
+    sb.removeChannel(channel)
+  }
+}
+
+export function subscribeToProgress(callback: RealtimeCallback<ChapterProgress & { chapter_id: string }>): (() => void) | null {
+  if (!isSupabaseConfigured || !supabase) return null
+
+  const sb = supabase // Capture for closure
+  const channel = sb
+    .channel('progress-changes')
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'progress' },
+      (payload) => {
+        const dbProgress = payload.new as {
+          chapter_id: string
+          recording_id: string
+          playback_position: number
+          duration: number
+          completed: boolean
+          last_played: string
+        }
+
+        // Convert database format to app format
+        const appProgress: ChapterProgress & { chapter_id: string } = {
+          chapter_id: dbProgress.chapter_id,
+          chapterId: dbProgress.chapter_id,
+          recordingId: dbProgress.recording_id,
+          currentTime: dbProgress.playback_position,
+          duration: dbProgress.duration,
+          completed: dbProgress.completed,
+          lastPlayed: dbProgress.last_played,
+        }
+
+        callback({
+          new: appProgress,
+          old: null,
+          eventType: payload.eventType as 'INSERT' | 'UPDATE' | 'DELETE',
+        })
+      }
+    )
+    .subscribe()
+
+  return () => {
+    sb.removeChannel(channel)
+  }
+}
+
 export function markChapterComplete(chapterId: string): void {
   const progress = getProgress()
   if (progress[chapterId]) {
@@ -729,6 +1008,12 @@ export async function syncFromSupabase(): Promise<void> {
   if (!isSupabaseConfigured || !supabase) return
 
   console.log('Syncing from Supabase to local...')
+
+  // First, process any pending offline operations
+  const { success, failed } = await processPendingOperations()
+  if (success > 0 || failed > 0) {
+    console.log(`Processed pending operations: ${success} succeeded, ${failed} failed`)
+  }
 
   // Fetch and merge books
   const { data: remoteBooks } = await supabase.from('books').select('*')

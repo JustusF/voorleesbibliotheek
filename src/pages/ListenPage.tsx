@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import { BookCover, Avatar, CloudDecoration, Button, Card } from '../components/ui'
 import { AudioPlayer } from '../components/AudioPlayer'
-import { getBooks, getUsers, getBookWithChapters, getChapterWithRecordings, getChapterProgress, getRecordings, getChapters } from '../lib/storage'
+import { getBooks, getUsers, getBookWithChapters, getChapterWithRecordings, getChapterProgress, getRecordings, getChapters, getBooksAsync, getUsersAsync } from '../lib/storage'
+import { useRealtimeSync } from '../hooks/useRealtimeSync'
 import type { Book, User, Chapter, Recording } from '../types'
 
 type ViewMode = 'books' | 'readers' | 'chapters' | 'player' | 'reader-recordings'
@@ -47,6 +48,28 @@ export function ListenPage() {
   }, [viewMode])
 
   const readers = users.filter(u => u.role === 'reader' || u.role === 'admin')
+
+  // Real-time sync: refresh data when changes come in from other devices
+  const refreshData = useCallback(async () => {
+    try {
+      const [newBooks, newUsers] = await Promise.all([
+        getBooksAsync(),
+        getUsersAsync(),
+      ])
+      setBooks(newBooks.length > 0 ? newBooks : getBooks())
+      setUsers(newUsers.length > 0 ? newUsers : getUsers())
+    } catch (error) {
+      console.error('Error refreshing data:', error)
+      // Fallback to localStorage
+      setBooks(getBooks())
+      setUsers(getUsers())
+    }
+  }, [])
+
+  useRealtimeSync({
+    onBooksChange: refreshData,
+    onRecordingsChange: refreshData,
+  })
 
   const handleBookSelect = (book: Book) => {
     setSelected({ book })
@@ -115,6 +138,70 @@ export function ListenPage() {
   const handleClosePlayer = () => {
     setViewMode('chapters')
     setSelected({ book: selected.book })
+  }
+
+  // Get chapters with recordings for navigation
+  const getPlayableChapters = () => {
+    if (!bookWithChapters) return []
+    return bookWithChapters.chapters.filter(chapter => {
+      const chapterData = getChapterWithRecordings(chapter.id)
+      return chapterData && chapterData.recordings.length > 0
+    })
+  }
+
+  const handleNextChapter = () => {
+    if (!selected.chapter || !selected.book) return
+    const playableChapters = getPlayableChapters()
+    const currentIndex = playableChapters.findIndex(c => c.id === selected.chapter?.id)
+    if (currentIndex < playableChapters.length - 1) {
+      const nextChapter = playableChapters[currentIndex + 1]
+      const chapterData = getChapterWithRecordings(nextChapter.id)
+      if (chapterData && chapterData.recordings.length > 0) {
+        const recording = chapterData.recordings[0]
+        const reader = users.find(u => u.id === recording.reader_id)
+        if (reader) {
+          setSelected({
+            ...selected,
+            chapter: nextChapter,
+            recording,
+            reader,
+          })
+        }
+      }
+    }
+  }
+
+  const handlePreviousChapter = () => {
+    if (!selected.chapter || !selected.book) return
+    const playableChapters = getPlayableChapters()
+    const currentIndex = playableChapters.findIndex(c => c.id === selected.chapter?.id)
+    if (currentIndex > 0) {
+      const prevChapter = playableChapters[currentIndex - 1]
+      const chapterData = getChapterWithRecordings(prevChapter.id)
+      if (chapterData && chapterData.recordings.length > 0) {
+        const recording = chapterData.recordings[0]
+        const reader = users.find(u => u.id === recording.reader_id)
+        if (reader) {
+          setSelected({
+            ...selected,
+            chapter: prevChapter,
+            recording,
+            reader,
+          })
+        }
+      }
+    }
+  }
+
+  // Check if next/previous navigation is possible
+  const canNavigate = () => {
+    if (!selected.chapter) return { canNext: false, canPrevious: false }
+    const playableChapters = getPlayableChapters()
+    const currentIndex = playableChapters.findIndex(c => c.id === selected.chapter?.id)
+    return {
+      canNext: currentIndex < playableChapters.length - 1,
+      canPrevious: currentIndex > 0,
+    }
   }
 
   const bookWithChapters = selected.book ? getBookWithChapters(selected.book.id) : null
@@ -190,7 +277,7 @@ export function ListenPage() {
               variants={containerVariants}
               initial="hidden"
               animate="visible"
-              className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-6 md:gap-8"
+              className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4 md:gap-6"
             >
               {books.map((book) => (
                 <motion.div key={book.id} variants={itemVariants}>
@@ -199,11 +286,11 @@ export function ListenPage() {
                     size="lg"
                     onClick={() => handleBookSelect(book)}
                   />
-                  <p className="mt-3 text-center font-display text-cocoa">
+                  <p className="mt-2 text-center font-display text-sm sm:text-base text-cocoa line-clamp-2">
                     {book.title}
                   </p>
                   {book.author && (
-                    <p className="text-center text-sm text-cocoa-light">
+                    <p className="text-center text-xs sm:text-sm text-cocoa-light line-clamp-1">
                       {book.author}
                     </p>
                   )}
@@ -426,15 +513,20 @@ export function ListenPage() {
       )}
 
       {/* Audio Player Modal */}
-      {viewMode === 'player' && selected.recording && selected.chapter && selected.book && selected.reader && (
-        <AudioPlayer
-          recording={selected.recording}
-          chapter={selected.chapter}
-          book={selected.book}
-          reader={selected.reader}
-          onClose={handleClosePlayer}
-        />
-      )}
+      {viewMode === 'player' && selected.recording && selected.chapter && selected.book && selected.reader && (() => {
+        const { canNext, canPrevious } = canNavigate()
+        return (
+          <AudioPlayer
+            recording={selected.recording}
+            chapter={selected.chapter}
+            book={selected.book}
+            reader={selected.reader}
+            onClose={handleClosePlayer}
+            onNext={canNext ? handleNextChapter : undefined}
+            onPrevious={canPrevious ? handlePreviousChapter : undefined}
+          />
+        )
+      })()}
     </div>
   )
 }

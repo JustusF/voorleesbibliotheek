@@ -11,10 +11,13 @@ import {
   addChapter,
   addChapters,
   deleteChapter,
+  updateChapter,
   getUsers,
   addUser,
   deleteUser,
   updateUser,
+  getRecordingsForChapter,
+  deleteRecording,
 } from '../lib/storage'
 import type { Book, Chapter, User } from '../types'
 
@@ -44,6 +47,9 @@ export function AdminPage() {
   const [newReaderPhoto, setNewReaderPhoto] = useState<string | null>(null)
   const [editReaderName, setEditReaderName] = useState('')
   const [editReaderPhoto, setEditReaderPhoto] = useState<string | null>(null)
+  const [editingChapter, setEditingChapter] = useState<Chapter | null>(null)
+  const [editChapterTitle, setEditChapterTitle] = useState('')
+  const [expandedChapters, setExpandedChapters] = useState<Set<string>>(new Set())
   const fileInputRef = useRef<HTMLInputElement>(null)
   const editFileInputRef = useRef<HTMLInputElement>(null)
 
@@ -365,6 +371,62 @@ export function AdminPage() {
     }
   }
 
+  const handleEditChapter = (chapter: Chapter) => {
+    setEditingChapter(chapter)
+    setEditChapterTitle(chapter.title)
+  }
+
+  const handleSaveChapter = () => {
+    if (!editingChapter || !editChapterTitle.trim()) return
+    updateChapter(editingChapter.id, { title: editChapterTitle.trim() })
+    if (selectedBook) {
+      setChapters(getChaptersForBook(selectedBook.id))
+    }
+    setEditingChapter(null)
+    setEditChapterTitle('')
+  }
+
+  const handleMoveChapter = (chapter: Chapter, direction: 'up' | 'down') => {
+    const sortedChapters = [...chapters].sort((a, b) => a.chapter_number - b.chapter_number)
+    const currentIndex = sortedChapters.findIndex(c => c.id === chapter.id)
+
+    if (direction === 'up' && currentIndex > 0) {
+      const prevChapter = sortedChapters[currentIndex - 1]
+      // Swap chapter numbers
+      updateChapter(chapter.id, { chapter_number: prevChapter.chapter_number })
+      updateChapter(prevChapter.id, { chapter_number: chapter.chapter_number })
+    } else if (direction === 'down' && currentIndex < sortedChapters.length - 1) {
+      const nextChapter = sortedChapters[currentIndex + 1]
+      // Swap chapter numbers
+      updateChapter(chapter.id, { chapter_number: nextChapter.chapter_number })
+      updateChapter(nextChapter.id, { chapter_number: chapter.chapter_number })
+    }
+
+    if (selectedBook) {
+      setChapters(getChaptersForBook(selectedBook.id))
+    }
+  }
+
+  const toggleChapterExpand = (chapterId: string) => {
+    setExpandedChapters(prev => {
+      const next = new Set(prev)
+      if (next.has(chapterId)) {
+        next.delete(chapterId)
+      } else {
+        next.add(chapterId)
+      }
+      return next
+    })
+  }
+
+  const handleDeleteRecording = (recordingId: string) => {
+    if (confirm('Weet je zeker dat je deze opname wilt verwijderen?')) {
+      deleteRecording(recordingId)
+      // Force re-render by toggling expand state
+      setExpandedChapters(prev => new Set(prev))
+    }
+  }
+
   const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>, isEdit: boolean = false) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -608,22 +670,158 @@ export function AdminPage() {
             </Card>
           ) : (
             <div className="space-y-2">
-              {chapters.map((chapter) => (
-                <Card key={chapter.id} className="p-4 flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-lg bg-sky-light flex items-center justify-center font-display text-cocoa">
-                    {chapter.chapter_number}
-                  </div>
-                  <p className="flex-1 text-cocoa">{chapter.title}</p>
-                  <button
-                    onClick={() => handleDeleteChapter(chapter.id)}
-                    className="p-2 text-cocoa-light hover:text-sunset transition-colors"
-                  >
-                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                </Card>
-              ))}
+              {[...chapters].sort((a, b) => a.chapter_number - b.chapter_number).map((chapter, index, sortedChapters) => {
+                const recordings = getRecordingsForChapter(chapter.id)
+                const isExpanded = expandedChapters.has(chapter.id)
+                const isEditing = editingChapter?.id === chapter.id
+
+                return (
+                  <Card key={chapter.id} hoverable={false} className="overflow-hidden">
+                    <div className="p-4 flex items-center gap-3">
+                      {/* Chapter number */}
+                      <div className="w-10 h-10 rounded-lg bg-sky-light flex items-center justify-center font-display text-cocoa flex-shrink-0">
+                        {chapter.chapter_number}
+                      </div>
+
+                      {/* Title - editable or static */}
+                      {isEditing ? (
+                        <div className="flex-1 flex gap-2">
+                          <input
+                            type="text"
+                            value={editChapterTitle}
+                            onChange={(e) => setEditChapterTitle(e.target.value)}
+                            className="flex-1 px-3 py-1 rounded-lg border-2 border-honey focus:outline-none"
+                            autoFocus
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleSaveChapter()
+                              if (e.key === 'Escape') setEditingChapter(null)
+                            }}
+                          />
+                          <Button variant="primary" size="sm" onClick={handleSaveChapter}>
+                            Opslaan
+                          </Button>
+                          <Button variant="ghost" size="sm" onClick={() => setEditingChapter(null)}>
+                            Annuleren
+                          </Button>
+                        </div>
+                      ) : (
+                        <p className="flex-1 text-cocoa">{chapter.title}</p>
+                      )}
+
+                      {/* Action buttons */}
+                      {!isEditing && (
+                        <div className="flex items-center gap-1">
+                          {/* Move up */}
+                          <button
+                            onClick={() => handleMoveChapter(chapter, 'up')}
+                            disabled={index === 0}
+                            className="p-2 text-cocoa-light hover:text-cocoa disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                            title="Omhoog"
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                            </svg>
+                          </button>
+
+                          {/* Move down */}
+                          <button
+                            onClick={() => handleMoveChapter(chapter, 'down')}
+                            disabled={index === sortedChapters.length - 1}
+                            className="p-2 text-cocoa-light hover:text-cocoa disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                            title="Omlaag"
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                            </svg>
+                          </button>
+
+                          {/* Edit title */}
+                          <button
+                            onClick={() => handleEditChapter(chapter)}
+                            className="p-2 text-cocoa-light hover:text-sky transition-colors"
+                            title="Naam wijzigen"
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                            </svg>
+                          </button>
+
+                          {/* Show recordings */}
+                          {recordings.length > 0 && (
+                            <button
+                              onClick={() => toggleChapterExpand(chapter.id)}
+                              className={`p-2 transition-colors ${isExpanded ? 'text-sky' : 'text-cocoa-light hover:text-cocoa'}`}
+                              title={`${recordings.length} opname${recordings.length !== 1 ? 's' : ''}`}
+                            >
+                              <span className="text-xs font-bold mr-1">{recordings.length}</span>
+                              <svg className={`w-4 h-4 inline transition-transform ${isExpanded ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              </svg>
+                            </button>
+                          )}
+
+                          {/* Delete chapter */}
+                          <button
+                            onClick={() => handleDeleteChapter(chapter.id)}
+                            className="p-2 text-cocoa-light hover:text-sunset transition-colors"
+                            title="Verwijderen"
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Expanded recordings list */}
+                    <AnimatePresence>
+                      {isExpanded && recordings.length > 0 && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          className="border-t border-cream-dark bg-cream/50"
+                        >
+                          <div className="p-4 space-y-2">
+                            <p className="text-sm text-cocoa-light font-medium mb-2">Opnames:</p>
+                            {recordings.map((recording) => {
+                              const reader = users.find(u => u.id === recording.reader_id)
+                              return (
+                                <div key={recording.id} className="flex items-center gap-3 p-2 bg-white rounded-lg">
+                                  <Avatar
+                                    src={reader?.avatar_url}
+                                    name={reader?.name || 'Onbekend'}
+                                    size="sm"
+                                  />
+                                  <div className="flex-1">
+                                    <p className="text-sm text-cocoa">{reader?.name || 'Onbekende voorlezer'}</p>
+                                    <p className="text-xs text-cocoa-light">
+                                      {recording.duration_seconds > 0
+                                        ? `${Math.floor(recording.duration_seconds / 60)}:${(recording.duration_seconds % 60).toString().padStart(2, '0')}`
+                                        : 'Duur onbekend'
+                                      }
+                                    </p>
+                                  </div>
+                                  <button
+                                    onClick={() => handleDeleteRecording(recording.id)}
+                                    className="p-2 text-cocoa-light hover:text-sunset transition-colors"
+                                    title="Opname verwijderen"
+                                  >
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                    </svg>
+                                  </button>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </Card>
+                )
+              })}
             </div>
           )}
         </motion.div>

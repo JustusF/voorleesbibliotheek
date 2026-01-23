@@ -20,8 +20,10 @@ CREATE TABLE IF NOT EXISTS books (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   family_id TEXT NOT NULL DEFAULT '1',
   title TEXT NOT NULL,
+  author TEXT,
   cover_url TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Chapters table
@@ -105,3 +107,36 @@ CREATE POLICY "Allow public update to audio" ON storage.objects
 
 CREATE POLICY "Allow public delete from audio" ON storage.objects
   FOR DELETE USING (bucket_id = 'audio');
+
+-- ============================================
+-- REALTIME SUBSCRIPTIONS
+-- ============================================
+-- Enable realtime for all tables to allow multi-device sync
+ALTER PUBLICATION supabase_realtime ADD TABLE books;
+ALTER PUBLICATION supabase_realtime ADD TABLE chapters;
+ALTER PUBLICATION supabase_realtime ADD TABLE recordings;
+ALTER PUBLICATION supabase_realtime ADD TABLE progress;
+ALTER PUBLICATION supabase_realtime ADD TABLE users;
+
+-- ============================================
+-- HELPER FUNCTIONS
+-- ============================================
+
+-- Function to automatically update updated_at timestamp
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+-- Add updated_at triggers to all tables
+CREATE TRIGGER update_books_updated_at BEFORE UPDATE ON books
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================
+-- MIGRATION HELPER (run if table already exists without author column)
+-- ============================================
+-- ALTER TABLE books ADD COLUMN IF NOT EXISTS author TEXT;
+-- ALTER TABLE books ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
