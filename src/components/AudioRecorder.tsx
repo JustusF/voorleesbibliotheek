@@ -1,0 +1,330 @@
+import { useState, useRef, useCallback, useEffect } from 'react'
+import { motion } from 'framer-motion'
+import { Button } from './ui'
+
+interface AudioRecorderProps {
+  onRecordingComplete: (blob: Blob, duration: number) => void
+  onCancel: () => void
+}
+
+type RecordingState = 'idle' | 'requesting_permission' | 'permission_denied' | 'recording' | 'recorded' | 'playing'
+
+export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderProps) {
+  const [state, setState] = useState<RecordingState>('idle')
+  const [duration, setDuration] = useState(0)
+  const [audioUrl, setAudioUrl] = useState<string | null>(null)
+  const [permissionError, setPermissionError] = useState<string | null>(null)
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const chunksRef = useRef<Blob[]>([])
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const blobRef = useRef<Blob | null>(null)
+  const analyserRef = useRef<AnalyserNode | null>(null)
+  const animationRef = useRef<number | null>(null)
+  const [audioLevels, setAudioLevels] = useState<number[]>(Array(20).fill(0))
+
+  // Check if microphone is available
+  useEffect(() => {
+    const checkMicrophonePermission = async () => {
+      try {
+        const permissionStatus = await navigator.permissions.query({ name: 'microphone' as PermissionName })
+        if (permissionStatus.state === 'denied') {
+          setState('permission_denied')
+          setPermissionError('Microfoon toegang is geblokkeerd. Ga naar je browserinstellingen om dit toe te staan.')
+        }
+      } catch {
+        // Permission API not supported, we'll handle it when trying to record
+      }
+    }
+    checkMicrophonePermission()
+  }, [])
+
+  const startRecording = useCallback(async () => {
+    setState('requesting_permission')
+    setPermissionError(null)
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        }
+      })
+
+      // Setup audio analyser for waveform visualization
+      const audioContext = new AudioContext()
+      const source = audioContext.createMediaStreamSource(stream)
+      const analyser = audioContext.createAnalyser()
+      analyser.fftSize = 64
+      source.connect(analyser)
+      analyserRef.current = analyser
+
+      // Start animation loop for audio levels
+      const updateLevels = () => {
+        if (analyserRef.current) {
+          const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount)
+          analyserRef.current.getByteFrequencyData(dataArray)
+          // Take 20 samples across the frequency range
+          const levels: number[] = []
+          const step = Math.floor(dataArray.length / 20)
+          for (let i = 0; i < 20; i++) {
+            levels.push(dataArray[i * step] / 255)
+          }
+          setAudioLevels(levels)
+        }
+        animationRef.current = requestAnimationFrame(updateLevels)
+      }
+      updateLevels()
+
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4'
+      })
+      mediaRecorderRef.current = mediaRecorder
+      chunksRef.current = []
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          chunksRef.current.push(e.data)
+        }
+      }
+
+      mediaRecorder.onstop = () => {
+        const mimeType = mediaRecorder.mimeType || 'audio/webm'
+        const blob = new Blob(chunksRef.current, { type: mimeType })
+        blobRef.current = blob
+        const url = URL.createObjectURL(blob)
+        setAudioUrl(url)
+        setState('recorded')
+        stream.getTracks().forEach(track => track.stop())
+        // Stop animation
+        if (animationRef.current) {
+          cancelAnimationFrame(animationRef.current)
+          animationRef.current = null
+        }
+        setAudioLevels(Array(20).fill(0))
+      }
+
+      mediaRecorder.start()
+      setState('recording')
+      setDuration(0)
+
+      timerRef.current = setInterval(() => {
+        setDuration(d => d + 1)
+      }, 1000)
+    } catch (err) {
+      console.error('Failed to start recording:', err)
+      setState('permission_denied')
+
+      if (err instanceof DOMException) {
+        if (err.name === 'NotAllowedError') {
+          setPermissionError('Je hebt geen toestemming gegeven voor de microfoon. Klik op het slot-icoontje in je browser om dit aan te passen.')
+        } else if (err.name === 'NotFoundError') {
+          setPermissionError('Geen microfoon gevonden. Sluit een microfoon aan en probeer het opnieuw.')
+        } else if (err.name === 'NotReadableError') {
+          setPermissionError('De microfoon is in gebruik door een andere app. Sluit andere apps en probeer het opnieuw.')
+        } else {
+          setPermissionError('Er ging iets mis met de microfoon. Probeer het opnieuw.')
+        }
+      } else {
+        setPermissionError('Er ging iets mis. Probeer het opnieuw.')
+      }
+    }
+  }, [])
+
+  const stopRecording = useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.stop()
+      if (timerRef.current) {
+        clearInterval(timerRef.current)
+        timerRef.current = null
+      }
+    }
+  }, [])
+
+  const playPreview = useCallback(() => {
+    if (audioRef.current && audioUrl) {
+      audioRef.current.play()
+      setState('playing')
+    }
+  }, [audioUrl])
+
+  const stopPreview = useCallback(() => {
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current.currentTime = 0
+      setState('recorded')
+    }
+  }, [])
+
+  const resetRecording = useCallback(() => {
+    if (audioUrl) {
+      URL.revokeObjectURL(audioUrl)
+    }
+    setAudioUrl(null)
+    blobRef.current = null
+    setDuration(0)
+    setState('idle')
+  }, [audioUrl])
+
+  const confirmRecording = useCallback(() => {
+    if (blobRef.current) {
+      onRecordingComplete(blobRef.current, duration)
+    }
+  }, [duration, onRecordingComplete])
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60)
+    const secs = seconds % 60
+    return `${mins}:${secs.toString().padStart(2, '0')}`
+  }
+
+  return (
+    <div className="bg-white rounded-[32px] shadow-lifted p-8 max-w-md w-full mx-auto">
+      {audioUrl && <audio ref={audioRef} src={audioUrl} onEnded={() => setState('recorded')} />}
+
+      <div className="text-center mb-8">
+        <h2 className="font-display text-2xl text-cocoa mb-2">
+          {state === 'idle' && 'Klaar om op te nemen'}
+          {state === 'requesting_permission' && 'Even geduld...'}
+          {state === 'permission_denied' && 'Microfoon nodig'}
+          {state === 'recording' && 'Aan het opnemen...'}
+          {(state === 'recorded' || state === 'playing') && 'Opname klaar!'}
+        </h2>
+        <p className="text-cocoa-light">
+          {state === 'idle' && 'Druk op de knop om te beginnen'}
+          {state === 'requesting_permission' && 'We vragen toegang tot je microfoon...'}
+          {state === 'permission_denied' && permissionError}
+          {state === 'recording' && 'Spreek duidelijk in de microfoon'}
+          {(state === 'recorded' || state === 'playing') && 'Beluister je opname hieronder'}
+        </p>
+      </div>
+
+      {/* Timer display */}
+      <div className="flex justify-center mb-4" aria-live="polite" aria-atomic="true">
+        <motion.div
+          animate={state === 'recording' ? { scale: [1, 1.05, 1] } : {}}
+          transition={{ duration: 1, repeat: Infinity }}
+          className={`
+            text-5xl font-display tabular-nums
+            ${state === 'recording' ? 'text-sunset' : 'text-cocoa'}
+          `}
+          aria-label={`Opname tijd: ${formatTime(duration)}`}
+        >
+          {formatTime(duration)}
+        </motion.div>
+      </div>
+
+      {/* Audio waveform visualization */}
+      {state === 'recording' && (
+        <div className="flex items-center justify-center gap-1 h-16 mb-6" aria-hidden="true" role="presentation">
+          {audioLevels.map((level, i) => (
+            <motion.div
+              key={i}
+              className="w-2 bg-gradient-to-t from-sunset to-honey rounded-full"
+              animate={{ height: Math.max(8, level * 60) }}
+              transition={{ duration: 0.05 }}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Spacer when not recording */}
+      {state !== 'recording' && <div className="h-4 mb-4" />}
+
+      {/* Main control */}
+      <div className="flex justify-center mb-8" role="group" aria-label="Opname bediening">
+        {(state === 'idle' || state === 'permission_denied') && (
+          <Button variant="record" size="xl" onClick={startRecording} aria-label="Start opname">
+            <svg className="w-12 h-12" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="6" />
+            </svg>
+          </Button>
+        )}
+
+        {state === 'requesting_permission' && (
+          <div className="w-[120px] h-[120px] rounded-[32px] bg-cream-dark flex items-center justify-center" aria-label="Wachten op microfoon toegang">
+            <motion.div
+              animate={{ rotate: 360 }}
+              transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+              className="w-10 h-10 border-4 border-honey border-t-transparent rounded-full"
+              aria-hidden="true"
+            />
+          </div>
+        )}
+
+        {state === 'recording' && (
+          <div className="relative">
+            {/* Pulsing ring */}
+            <motion.div
+              className="absolute inset-0 rounded-[32px] bg-sunset pointer-events-none"
+              animate={{ scale: [1, 1.3], opacity: [0.5, 0] }}
+              transition={{ duration: 1, repeat: Infinity }}
+              aria-hidden="true"
+            />
+            <Button variant="record" size="xl" onClick={stopRecording} aria-label="Stop opname">
+              <svg className="w-10 h-10" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="6" y="6" width="12" height="12" rx="2" />
+              </svg>
+            </Button>
+          </div>
+        )}
+
+        {(state === 'recorded' || state === 'playing') && (
+          <Button
+            variant="play"
+            size="xl"
+            onClick={state === 'playing' ? stopPreview : playPreview}
+            aria-label={state === 'playing' ? 'Stop preview' : 'Beluister opname'}
+          >
+            {state === 'playing' ? (
+              <svg className="w-10 h-10" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
+              </svg>
+            ) : (
+              <svg className="w-12 h-12 ml-1" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+            )}
+          </Button>
+        )}
+      </div>
+
+      {/* Action buttons */}
+      <div className="flex gap-4 justify-center">
+        {(state === 'idle' || state === 'permission_denied') && (
+          <Button variant="ghost" onClick={onCancel}>
+            Annuleren
+          </Button>
+        )}
+
+        {state === 'recording' && (
+          <Button variant="primary" onClick={stopRecording}>
+            <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 24 24">
+              <rect x="6" y="6" width="12" height="12" rx="2" />
+            </svg>
+            Stop opname
+          </Button>
+        )}
+
+        {(state === 'recorded' || state === 'playing') && (
+          <>
+            <Button variant="ghost" onClick={resetRecording}>
+              <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              Opnieuw
+            </Button>
+            <Button variant="primary" onClick={confirmRecording}>
+              <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              Opslaan
+            </Button>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
