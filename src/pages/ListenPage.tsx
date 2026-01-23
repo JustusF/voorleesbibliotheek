@@ -202,6 +202,11 @@ export function ListenPage() {
                   <p className="mt-3 text-center font-display text-cocoa">
                     {book.title}
                   </p>
+                  {book.author && (
+                    <p className="text-center text-sm text-cocoa-light">
+                      {book.author}
+                    </p>
+                  )}
                 </motion.div>
               ))}
             </motion.div>

@@ -18,6 +18,7 @@ export interface Book {
   id: string
   family_id: string
   title: string
+  author: string | null
   cover_url: string | null
   created_at: string
 }

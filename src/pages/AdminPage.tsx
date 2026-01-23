@@ -33,9 +33,11 @@ export function AdminPage() {
   const [showAddReader, setShowAddReader] = useState(false)
   const [showEditReader, setShowEditReader] = useState(false)
   const [newBookTitle, setNewBookTitle] = useState('')
+  const [newBookAuthor, setNewBookAuthor] = useState('')
   const [newChaptersText, setNewChaptersText] = useState('')
   const [isSearchingChapters, setIsSearchingChapters] = useState(false)
   const [editBookTitle, setEditBookTitle] = useState('')
+  const [editBookAuthor, setEditBookAuthor] = useState('')
   const [, setEditChaptersText] = useState('')
   const [newChapterTitle, setNewChapterTitle] = useState('')
   const [newReaderName, setNewReaderName] = useState('')
@@ -297,13 +299,14 @@ export function AdminPage() {
 
     const chaptersArray = parseChaptersText(newChaptersText)
 
-    const book = addBook(newBookTitle.trim())
+    const book = addBook(newBookTitle.trim(), newBookAuthor.trim() || undefined)
     if (chaptersArray.length > 0) {
       addChapters(book.id, chaptersArray)
     }
 
     setBooks(getBooks())
     setNewBookTitle('')
+    setNewBookAuthor('')
     setNewChaptersText('')
     setShowAddBook(false)
   }
@@ -311,6 +314,7 @@ export function AdminPage() {
   const handleEditBook = (book: Book) => {
     setSelectedBook(book)
     setEditBookTitle(book.title)
+    setEditBookAuthor(book.author || '')
     const bookChapters = getChaptersForBook(book.id)
     setEditChaptersText(bookChapters.map(c => c.title).join('\n'))
     setShowEditBook(true)
@@ -319,11 +323,14 @@ export function AdminPage() {
   const handleSaveBook = () => {
     if (!selectedBook || !editBookTitle.trim()) return
 
-    // Update book title
-    updateBook(selectedBook.id, { title: editBookTitle.trim() })
+    // Update book title and author
+    updateBook(selectedBook.id, {
+      title: editBookTitle.trim(),
+      author: editBookAuthor.trim() || null
+    })
 
     setBooks(getBooks())
-    setSelectedBook({ ...selectedBook, title: editBookTitle.trim() })
+    setSelectedBook({ ...selectedBook, title: editBookTitle.trim(), author: editBookAuthor.trim() || null })
     setShowEditBook(false)
   }
 
@@ -497,6 +504,7 @@ export function AdminPage() {
                     <div className="flex-1">
                       <p className="font-display text-lg text-cocoa">{book.title}</p>
                       <p className="text-sm text-cocoa-light">
+                        {book.author && <span>{book.author} · </span>}
                         {getChaptersForBook(book.id).length} hoofdstukken
                       </p>
                     </div>
@@ -548,8 +556,11 @@ export function AdminPage() {
           <Card hoverable={false} className="p-6 mb-6">
             <div className="flex items-start justify-between">
               <div>
-                <h2 className="font-display text-2xl text-cocoa mb-2">{selectedBook.title}</h2>
-                <p className="text-cocoa-light">{chapters.length} hoofdstukken</p>
+                <h2 className="font-display text-2xl text-cocoa mb-1">{selectedBook.title}</h2>
+                {selectedBook.author && (
+                  <p className="text-cocoa-light mb-1">door {selectedBook.author}</p>
+                )}
+                <p className="text-cocoa-light text-sm">{chapters.length} hoofdstukken</p>
               </div>
               <Button
                 variant="secondary"
@@ -703,9 +714,22 @@ export function AdminPage() {
                 </div>
 
                 <div>
+                  <label className="block text-sm font-medium text-cocoa mb-2">
+                    Schrijver (optioneel)
+                  </label>
+                  <input
+                    type="text"
+                    value={newBookAuthor}
+                    onChange={(e) => setNewBookAuthor(e.target.value)}
+                    placeholder="Bijv. Max Velthuijs"
+                    className="w-full px-4 py-3 rounded-xl border-2 border-cream-dark focus:border-honey outline-none transition-colors"
+                  />
+                </div>
+
+                <div>
                   <div className="flex items-center justify-between mb-2">
                     <label className="block text-sm font-medium text-cocoa">
-                      Hoofdstukken (één per regel)
+                      Hoofdstukken (één per regel, optioneel)
                     </label>
                     <Button
                       variant="secondary"
@@ -787,6 +811,19 @@ export function AdminPage() {
                     value={editBookTitle}
                     onChange={(e) => setEditBookTitle(e.target.value)}
                     placeholder="Bijv. Kikker en zijn vriendjes"
+                    className="w-full px-4 py-3 rounded-xl border-2 border-cream-dark focus:border-honey outline-none transition-colors"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-cocoa mb-2">
+                    Schrijver (optioneel)
+                  </label>
+                  <input
+                    type="text"
+                    value={editBookAuthor}
+                    onChange={(e) => setEditBookAuthor(e.target.value)}
+                    placeholder="Bijv. Max Velthuijs"
                     className="w-full px-4 py-3 rounded-xl border-2 border-cream-dark focus:border-honey outline-none transition-colors"
                   />
                 </div>

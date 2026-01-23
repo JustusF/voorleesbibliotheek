@@ -226,6 +226,11 @@ export function AudioPlayer({
           {/* Chapter info */}
           <div className="text-center mb-6">
             <h2 className="font-display text-2xl text-cocoa mb-1">{chapter.title}</h2>
+            {book.author && (
+              <p className="text-cocoa-light text-sm mb-1">
+                door {book.author}
+              </p>
+            )}
             <p className="text-cocoa-light">
               Voorgelezen door <span className="font-semibold">{reader.name}</span>
             </p>

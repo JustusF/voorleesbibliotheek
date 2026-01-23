@@ -77,11 +77,12 @@ export function getBooks(): Book[] {
   return loadFromStorage(STORAGE_KEYS.books, [])
 }
 
-export async function addBookAsync(title: string, coverUrl?: string): Promise<Book> {
+export async function addBookAsync(title: string, author?: string, coverUrl?: string): Promise<Book> {
   const newBook: Book = {
     id: crypto.randomUUID(),
     family_id: '1',
     title,
+    author: author || null,
     cover_url: coverUrl || null,
     created_at: new Date().toISOString(),
   }
@@ -110,11 +111,12 @@ export async function addBookAsync(title: string, coverUrl?: string): Promise<Bo
 }
 
 // Synchronous version for backward compatibility
-export function addBook(title: string, coverUrl?: string): Book {
+export function addBook(title: string, author?: string, coverUrl?: string): Book {
   const newBook: Book = {
     id: crypto.randomUUID(),
     family_id: '1',
     title,
+    author: author || null,
     cover_url: coverUrl || null,
     created_at: new Date().toISOString(),
   }
