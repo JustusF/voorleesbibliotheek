@@ -12,28 +12,33 @@ interface ButtonProps extends Omit<HTMLMotionProps<'button'>, 'ref'> {
 
 const variantStyles: Record<ButtonVariant, string> = {
   primary: `
-    bg-honey text-white
-    hover:bg-honey-dark
+    bg-gradient-to-br from-honey via-honey to-honey-dark text-white
+    hover:from-honey-dark hover:via-honey hover:to-honey
     shadow-soft hover:shadow-lifted
+    border-2 border-honey-dark/20
   `,
   secondary: `
-    bg-cream-dark text-cocoa
-    hover:bg-honey-light
+    bg-gradient-to-br from-cream to-cream-dark text-cocoa
+    hover:from-honey-light hover:to-honey-light
     shadow-soft hover:shadow-lifted
+    border-2 border-cocoa/10
   `,
   ghost: `
     bg-transparent text-cocoa
-    hover:bg-cream-dark
+    hover:bg-cream-dark/80
+    border-2 border-transparent
   `,
   play: `
-    bg-sky text-white
-    hover:bg-sky-light hover:text-cocoa
+    bg-gradient-to-br from-sky via-sky to-sky-light text-white
+    hover:from-sky-light hover:via-sky hover:to-sky
     shadow-lifted hover:shadow-floating
+    border-2 border-sky/30
   `,
   record: `
-    bg-sunset text-white
-    hover:bg-sunset-light
+    bg-gradient-to-br from-sunset via-sunset to-sunset-light text-white
+    hover:from-sunset-light hover:via-sunset hover:to-sunset
     shadow-lifted hover:shadow-floating
+    border-2 border-sunset-light/30
   `,
 }
 
