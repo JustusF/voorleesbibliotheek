@@ -4,10 +4,10 @@ import { useNavigate } from 'react-router-dom'
 import { Button, CloudDecoration, Avatar, Card } from '../components/ui'
 import { AudioRecorder } from '../components/AudioRecorder'
 import { FileUpload } from '../components/FileUpload'
-import { getBooks, getUsers, addRecording, addBook, getOrCreateNextChapter } from '../lib/storage'
+import { getBooks, getUsers, addRecording, addBook, getOrCreateNextChapter, getChaptersForBook } from '../lib/storage'
 import type { Book, Chapter, User } from '../types'
 
-type Step = 'reader' | 'book' | 'record' | 'success'
+type Step = 'reader' | 'book' | 'chapter' | 'record' | 'success'
 type RecordMode = 'record' | 'upload' | null
 type BookMode = 'select' | 'new'
 
@@ -22,6 +22,7 @@ export function ReadPage() {
   const [bookMode, setBookMode] = useState<BookMode>('select')
   const [newBookTitle, setNewBookTitle] = useState('')
   const [currentChapter, setCurrentChapter] = useState<Chapter | null>(null)
+  const [bookChapters, setBookChapters] = useState<Chapter[]>([])
 
   useEffect(() => {
     setBooks(getBooks())
@@ -36,9 +37,22 @@ export function ReadPage() {
   const handleBookSelect = (book: Book) => {
     setSelectedBook(book)
     setBookMode('select')
-    // Automatically create/get next chapter and go to record
-    const chapter = getOrCreateNextChapter(book.id)
+    // Load chapters and go to chapter selection
+    const chapters = getChaptersForBook(book.id)
+    setBookChapters(chapters)
+    setStep('chapter')
+  }
+
+  const handleChapterSelect = (chapter: Chapter) => {
     setCurrentChapter(chapter)
+    setStep('record')
+  }
+
+  const handleNewChapter = () => {
+    if (!selectedBook) return
+    const chapter = getOrCreateNextChapter(selectedBook.id)
+    setCurrentChapter(chapter)
+    setBookChapters(getChaptersForBook(selectedBook.id))
     setStep('record')
   }
 
@@ -90,10 +104,13 @@ export function ReadPage() {
       if (recordMode) {
         setRecordMode(null)
       } else {
-        setStep('book')
-        setSelectedBook(null)
+        setStep('chapter')
         setCurrentChapter(null)
       }
+    } else if (step === 'chapter') {
+      setStep('book')
+      setSelectedBook(null)
+      setBookChapters([])
     } else if (step === 'book') {
       if (bookMode === 'new') {
         setBookMode('select')
@@ -107,13 +124,13 @@ export function ReadPage() {
     }
   }
 
-  // Record next chapter of the same book
-  const handleNextChapter = () => {
+  // Go back to chapter selection for another recording
+  const handleAnotherChapter = () => {
     if (!selectedBook) return
-    const chapter = getOrCreateNextChapter(selectedBook.id)
-    setCurrentChapter(chapter)
+    setBookChapters(getChaptersForBook(selectedBook.id))
+    setCurrentChapter(null)
     setRecordMode(null)
-    setStep('record')
+    setStep('chapter')
   }
 
   // Start fresh with different book
@@ -125,8 +142,9 @@ export function ReadPage() {
   }
 
   const getStepIndex = (s: Step): number => {
-    const steps = ['reader', 'book', 'record']
-    return steps.indexOf(s)
+    const steps = ['reader', 'book', 'chapter', 'record']
+    const index = steps.indexOf(s)
+    return index === -1 ? steps.length : index
   }
 
   return (
@@ -147,6 +165,7 @@ export function ReadPage() {
         <h1 className="font-display text-3xl text-cocoa">
           {step === 'reader' && 'Wie ben jij?'}
           {step === 'book' && 'Welk boek ga je voorlezen?'}
+          {step === 'chapter' && 'Welk hoofdstuk?'}
           {step === 'record' && selectedBook?.title}
           {step === 'success' && 'Gelukt!'}
         </h1>
@@ -157,13 +176,13 @@ export function ReadPage() {
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          className="max-w-md mx-auto mb-8"
+          className="max-w-lg mx-auto mb-8"
         >
           <div className="flex items-center justify-between">
-            {['reader', 'book', 'record'].map((s, i) => (
+            {['reader', 'book', 'chapter', 'record'].map((s, i) => (
               <div key={s} className="flex items-center">
                 <div className={`
-                  w-10 h-10 rounded-full flex items-center justify-center font-display text-lg
+                  w-8 h-8 md:w-10 md:h-10 rounded-full flex items-center justify-center font-display text-sm md:text-lg
                   ${getStepIndex(step) >= i
                     ? 'bg-honey text-white'
                     : 'bg-cream-dark text-cocoa-light'
@@ -171,9 +190,9 @@ export function ReadPage() {
                 `}>
                   {i + 1}
                 </div>
-                {i < 2 && (
+                {i < 3 && (
                   <div className={`
-                    w-12 md:w-24 h-1 mx-2 md:mx-4
+                    w-8 md:w-16 h-1 mx-1 md:mx-3
                     ${getStepIndex(step) > i
                       ? 'bg-honey'
                       : 'bg-cream-dark'
@@ -186,6 +205,7 @@ export function ReadPage() {
           <div className="flex justify-between mt-2 text-xs md:text-sm text-cocoa-light">
             <span>Wie</span>
             <span>Boek</span>
+            <span>Hoofdstuk</span>
             <span>Opnemen</span>
           </div>
         </motion.div>
@@ -341,6 +361,71 @@ export function ReadPage() {
           </motion.div>
         )}
 
+        {/* Step: Chapter Selection */}
+        {step === 'chapter' && (
+          <motion.div
+            key="chapter"
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            className="max-w-2xl mx-auto"
+          >
+            {selectedBook && (
+              <div className="flex items-center gap-3 mb-6 p-3 bg-white/50 rounded-xl">
+                <div className="w-10 h-10 rounded-[10px] bg-honey-light flex items-center justify-center text-xl">
+                  📖
+                </div>
+                <span className="text-cocoa">Boek: <strong>{selectedBook.title}</strong></span>
+              </div>
+            )}
+
+            <div className="space-y-3">
+              {/* Add new chapter button - always visible at top */}
+              <motion.button
+                whileHover={{ scale: 1.02, x: 4 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={handleNewChapter}
+                className="w-full p-5 bg-gradient-to-r from-honey to-honey-dark rounded-[20px] shadow-soft hover:shadow-lifted text-left flex items-center gap-4 transition-shadow"
+              >
+                <div className="w-12 h-12 rounded-[12px] bg-white/30 flex items-center justify-center text-2xl">
+                  ➕
+                </div>
+                <div>
+                  <span className="font-display text-xl text-white block">Nieuw hoofdstuk</span>
+                  <span className="text-white/80 text-sm">Automatisch genummerd</span>
+                </div>
+                <svg className="w-6 h-6 text-white/80 ml-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </motion.button>
+
+              {/* Existing chapters */}
+              {bookChapters.length > 0 && (
+                <div className="pt-2">
+                  <p className="text-cocoa-light text-sm mb-3 px-1">Of voeg audio toe aan een bestaand hoofdstuk:</p>
+                  {bookChapters.map((chapter) => (
+                    <motion.button
+                      key={chapter.id}
+                      whileHover={{ scale: 1.02, x: 4 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={() => handleChapterSelect(chapter)}
+                      className="w-full p-5 bg-white rounded-[20px] shadow-soft hover:shadow-lifted text-left flex items-center gap-4 transition-shadow mb-3"
+                    >
+                      <div className="w-12 h-12 rounded-[12px] bg-sky-light flex items-center justify-center font-display text-xl text-cocoa">
+                        {chapter.chapter_number}
+                      </div>
+                      <span className="font-display text-xl text-cocoa">{chapter.title}</span>
+                      <svg className="w-6 h-6 text-cocoa-light ml-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </motion.button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+
         {/* Step: Record/Upload Selection */}
         {step === 'record' && !recordMode && (
           <motion.div
@@ -452,12 +537,12 @@ export function ReadPage() {
             </p>
 
             <div className="flex flex-col gap-4">
-              {/* Primary action: next chapter of same book */}
-              <Button variant="primary" size="lg" onClick={handleNextChapter} className="w-full">
+              {/* Primary action: choose another chapter */}
+              <Button variant="primary" size="lg" onClick={handleAnotherChapter} className="w-full">
                 <svg className="w-6 h-6 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
                 </svg>
-                Volgend hoofdstuk opnemen
+                Nog een hoofdstuk opnemen
               </Button>
 
               <div className="flex gap-4">

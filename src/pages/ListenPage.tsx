@@ -427,13 +427,71 @@ export function ListenPage() {
       )}
 
       {/* Chapters List */}
-      {viewMode === 'chapters' && bookWithChapters && (
+      {viewMode === 'chapters' && bookWithChapters && (() => {
+        // Calculate book-level stats
+        const bookStats = bookWithChapters.chapters.reduce(
+          (acc, chapter) => {
+            const chapterData = getChapterWithRecordings(chapter.id)
+            if (chapterData && chapterData.recordings.length > 0) {
+              const rec = chapterData.recordings[0]
+              acc.totalDuration += rec.duration_seconds || 0
+              if (rec.reader?.name && !acc.readers.includes(rec.reader.name)) {
+                acc.readers.push(rec.reader.name)
+              }
+              acc.chaptersWithRecordings++
+            }
+            return acc
+          },
+          { totalDuration: 0, readers: [] as string[], chaptersWithRecordings: 0 }
+        )
+
+        const formatBookDuration = (seconds: number) => {
+          const hours = Math.floor(seconds / 3600)
+          const mins = Math.floor((seconds % 3600) / 60)
+          if (hours > 0) {
+            return `${hours}u ${mins}m`
+          }
+          return `${mins} min`
+        }
+
+        return (
         <motion.div
           variants={containerVariants}
           initial="hidden"
           animate="visible"
           className="max-w-2xl mx-auto space-y-4"
         >
+          {/* Book info header */}
+          {bookStats.chaptersWithRecordings > 0 && (
+            <motion.div
+              variants={itemVariants}
+              className="p-4 bg-white/60 rounded-[20px] flex flex-wrap items-center gap-4 mb-2"
+            >
+              {bookStats.totalDuration > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-lg">⏱️</span>
+                  <span className="text-cocoa">
+                    <span className="font-medium">{formatBookDuration(bookStats.totalDuration)}</span>
+                    <span className="text-cocoa-light ml-1">totaal</span>
+                  </span>
+                </div>
+              )}
+              {bookStats.readers.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-lg">🎙️</span>
+                  <span className="text-cocoa">
+                    <span className="text-cocoa-light">Voorgelezen door </span>
+                    <span className="font-medium">{bookStats.readers.join(', ')}</span>
+                  </span>
+                </div>
+              )}
+              <div className="flex items-center gap-2 text-cocoa-light">
+                <span className="text-lg">📖</span>
+                <span>{bookStats.chaptersWithRecordings} van {bookWithChapters.chapters.length} hoofdstukken</span>
+              </div>
+            </motion.div>
+          )}
+
           {bookWithChapters.chapters.length === 0 ? (
             <Card hoverable={false} className="p-8 text-center">
               <div className="text-4xl mb-4">📝</div>
@@ -446,9 +504,31 @@ export function ListenPage() {
               const chapterData = getChapterWithRecordings(chapter.id)
               const hasRecordings = chapterData && chapterData.recordings.length > 0
               const progress = getChapterProgress(chapter.id)
-              const progressPercent = progress && progress.duration > 0
-                ? Math.round((progress.currentTime / progress.duration) * 100)
+
+              // Get duration from recording
+              const recording = chapterData?.recordings[0]
+              const durationSeconds = recording?.duration_seconds || 0
+              const currentTimeSeconds = progress?.currentTime || 0
+              const remainingSeconds = Math.max(0, durationSeconds - currentTimeSeconds)
+
+              const progressPercent = durationSeconds > 0
+                ? Math.round((currentTimeSeconds / durationSeconds) * 100)
                 : 0
+
+              // Format time helper
+              const formatTime = (seconds: number) => {
+                const mins = Math.floor(seconds / 60)
+                const secs = Math.floor(seconds % 60)
+                if (mins >= 60) {
+                  const hours = Math.floor(mins / 60)
+                  const remainingMins = mins % 60
+                  return `${hours}u ${remainingMins}m`
+                }
+                return `${mins}:${secs.toString().padStart(2, '0')}`
+              }
+
+              // Get reader name
+              const readerName = recording?.reader?.name
 
               return (
                 <motion.button
@@ -483,14 +563,33 @@ export function ListenPage() {
                     {progress?.completed ? '✅' : hasRecordings ? '🎧' : '📝'}
                   </div>
                   <div className="flex-1 relative">
-                    <p className="font-display text-xl text-cocoa">
-                      Hoofdstuk {chapter.chapter_number}
-                    </p>
-                    <p className="text-cocoa-light">{chapter.title}</p>
-                    {hasRecordings && progressPercent > 0 && !progress?.completed && (
-                      <p className="text-xs text-sky mt-1">
-                        {progressPercent}% beluisterd
+                    <div className="flex items-center gap-2">
+                      <p className="font-display text-xl text-cocoa">
+                        Hoofdstuk {chapter.chapter_number}
                       </p>
+                      {hasRecordings && durationSeconds > 0 && (
+                        <span className="text-sm text-cocoa-light bg-cream-dark/50 px-2 py-0.5 rounded-full">
+                          {formatTime(durationSeconds)}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-cocoa-light">{chapter.title}</p>
+                    {hasRecordings && (
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs">
+                        {readerName && (
+                          <span className="text-cocoa-light">
+                            Voorgelezen door <span className="font-medium text-cocoa">{readerName}</span>
+                          </span>
+                        )}
+                        {progressPercent > 0 && !progress?.completed && (
+                          <span className="text-sky">
+                            {formatTime(currentTimeSeconds)} beluisterd • nog {formatTime(remainingSeconds)}
+                          </span>
+                        )}
+                        {progress?.completed && (
+                          <span className="text-moss font-medium">Voltooid</span>
+                        )}
+                      </div>
                     )}
                   </div>
                   {hasRecordings && chapterData && (
@@ -510,7 +609,8 @@ export function ListenPage() {
             })
           )}
         </motion.div>
-      )}
+        )
+      })()}
 
       {/* Audio Player Modal */}
       {viewMode === 'player' && selected.recording && selected.chapter && selected.book && selected.reader && (() => {
@@ -521,9 +621,11 @@ export function ListenPage() {
             chapter={selected.chapter}
             book={selected.book}
             reader={selected.reader}
+            allChapters={bookWithChapters?.chapters || []}
             onClose={handleClosePlayer}
             onNext={canNext ? handleNextChapter : undefined}
             onPrevious={canPrevious ? handlePreviousChapter : undefined}
+            onChapterSelect={handleChapterSelect}
           />
         )
       })()}

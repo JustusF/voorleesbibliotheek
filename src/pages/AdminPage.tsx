@@ -18,7 +18,9 @@ import {
   updateUser,
   getRecordingsForChapter,
   deleteRecording,
+  addRecordingAsync,
 } from '../lib/storage'
+import { extractChaptersFromImages } from '../lib/ocr'
 import type { Book, Chapter, User } from '../types'
 
 type Tab = 'books' | 'readers'
@@ -50,8 +52,17 @@ export function AdminPage() {
   const [editingChapter, setEditingChapter] = useState<Chapter | null>(null)
   const [editChapterTitle, setEditChapterTitle] = useState('')
   const [expandedChapters, setExpandedChapters] = useState<Set<string>>(new Set())
+  const [isScanning, setIsScanning] = useState(false)
+  const [scanError, setScanError] = useState<string | null>(null)
+  const [scannedChapters, setScannedChapters] = useState<Array<{ number: number; title: string }>>([])
+  const [uploadingChapterId, setUploadingChapterId] = useState<string | null>(null)
+  const [showReaderSelectModal, setShowReaderSelectModal] = useState(false)
+  const [pendingAudioFile, setPendingAudioFile] = useState<File | null>(null)
+  const [isUploadingAudio, setIsUploadingAudio] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const editFileInputRef = useRef<HTMLInputElement>(null)
+  const tocFileInputRef = useRef<HTMLInputElement>(null)
+  const audioFileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     setBooks(getBooks())
@@ -427,6 +438,111 @@ export function AdminPage() {
     }
   }
 
+  const handleScanTableOfContents = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files || files.length === 0) return
+
+    setIsScanning(true)
+    setScanError(null)
+    setScannedChapters([])
+
+    try {
+      const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'))
+      if (imageFiles.length === 0) {
+        setScanError('Selecteer een of meer afbeeldingen.')
+        return
+      }
+
+      const result = await extractChaptersFromImages(imageFiles)
+
+      if (result.success && result.chapters.length > 0) {
+        setScannedChapters(result.chapters)
+      } else {
+        setScanError(result.error || 'Geen hoofdstukken gevonden.')
+      }
+    } catch (error) {
+      setScanError(`Er ging iets mis: ${error instanceof Error ? error.message : 'Onbekende fout'}`)
+    } finally {
+      setIsScanning(false)
+      // Reset file input
+      if (tocFileInputRef.current) {
+        tocFileInputRef.current.value = ''
+      }
+    }
+  }
+
+  const handleAddScannedChapters = () => {
+    if (!selectedBook || scannedChapters.length === 0) return
+
+    const existingChapters = getChaptersForBook(selectedBook.id)
+    const startNumber = existingChapters.length + 1
+
+    // Add all scanned chapters
+    scannedChapters.forEach((ch, index) => {
+      addChapter(selectedBook.id, startNumber + index, ch.title)
+    })
+
+    setChapters(getChaptersForBook(selectedBook.id))
+    setScannedChapters([])
+  }
+
+  const handleAudioFileSelect = (chapterId: string) => {
+    setUploadingChapterId(chapterId)
+    audioFileInputRef.current?.click()
+  }
+
+  const handleAudioFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !uploadingChapterId) return
+
+    // Check if it's an audio file
+    if (!file.type.startsWith('audio/')) {
+      alert('Selecteer een audiobestand (mp3, wav, m4a, etc.)')
+      return
+    }
+
+    // Store the file and show reader selection modal
+    setPendingAudioFile(file)
+    setShowReaderSelectModal(true)
+
+    // Reset file input
+    if (audioFileInputRef.current) {
+      audioFileInputRef.current.value = ''
+    }
+  }
+
+  const handleUploadAudioWithReader = async (readerId: string) => {
+    if (!pendingAudioFile || !uploadingChapterId) return
+
+    setIsUploadingAudio(true)
+    setShowReaderSelectModal(false)
+
+    try {
+      // Get audio duration
+      const duration = await new Promise<number>((resolve) => {
+        const audio = new Audio()
+        audio.onloadedmetadata = () => {
+          resolve(Math.round(audio.duration))
+        }
+        audio.onerror = () => resolve(0)
+        audio.src = URL.createObjectURL(pendingAudioFile)
+      })
+
+      // Upload the recording
+      await addRecordingAsync(uploadingChapterId, readerId, pendingAudioFile, duration)
+
+      // Force re-render
+      setExpandedChapters(prev => new Set(prev))
+    } catch (error) {
+      console.error('Error uploading audio:', error)
+      alert('Er ging iets mis bij het uploaden van de audio.')
+    } finally {
+      setIsUploadingAudio(false)
+      setPendingAudioFile(null)
+      setUploadingChapterId(null)
+    }
+  }
+
   const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>, isEdit: boolean = false) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -640,7 +756,7 @@ export function AdminPage() {
 
           {/* Add new chapter */}
           <Card hoverable={false} className="p-4 mb-4">
-            <div className="flex gap-3">
+            <div className="flex gap-3 mb-3">
               <input
                 type="text"
                 value={newChapterTitle}
@@ -661,6 +777,78 @@ export function AdminPage() {
               >
                 + Toevoegen
               </Button>
+            </div>
+
+            {/* Scan table of contents */}
+            <div className="border-t border-cream-dark pt-3">
+              <input
+                ref={tocFileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={handleScanTableOfContents}
+                className="hidden"
+              />
+              <div className="flex items-center gap-3">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => tocFileInputRef.current?.click()}
+                  disabled={isScanning}
+                >
+                  {isScanning ? (
+                    <>
+                      <span className="animate-spin mr-2">⏳</span>
+                      Scannen...
+                    </>
+                  ) : (
+                    <>📷 Scan inhoudsopgave</>
+                  )}
+                </Button>
+                <span className="text-sm text-cocoa-light">
+                  Maak een foto van de inhoudsopgave
+                </span>
+              </div>
+
+              {/* Scan error */}
+              {scanError && (
+                <div className="mt-3 p-3 bg-sunset/10 rounded-xl text-sm text-sunset">
+                  {scanError}
+                </div>
+              )}
+
+              {/* Scanned chapters preview */}
+              {scannedChapters.length > 0 && (
+                <div className="mt-3 p-3 bg-sky-light/30 rounded-xl">
+                  <p className="text-sm font-medium text-cocoa mb-2">
+                    {scannedChapters.length} hoofdstukken gevonden:
+                  </p>
+                  <ul className="text-sm text-cocoa-light space-y-1 max-h-40 overflow-y-auto">
+                    {scannedChapters.map((ch, i) => (
+                      <li key={i} className="flex gap-2">
+                        <span className="text-sky font-medium">{ch.number}.</span>
+                        <span>{ch.title}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="flex gap-2 mt-3">
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={handleAddScannedChapters}
+                    >
+                      Alle toevoegen
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setScannedChapters([])}
+                    >
+                      Annuleren
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           </Card>
 
@@ -746,19 +934,23 @@ export function AdminPage() {
                             </svg>
                           </button>
 
-                          {/* Show recordings */}
-                          {recordings.length > 0 && (
-                            <button
-                              onClick={() => toggleChapterExpand(chapter.id)}
-                              className={`p-2 transition-colors ${isExpanded ? 'text-sky' : 'text-cocoa-light hover:text-cocoa'}`}
-                              title={`${recordings.length} opname${recordings.length !== 1 ? 's' : ''}`}
-                            >
+                          {/* Show recordings / add audio */}
+                          <button
+                            onClick={() => toggleChapterExpand(chapter.id)}
+                            className={`p-2 transition-colors ${isExpanded ? 'text-sky' : 'text-cocoa-light hover:text-cocoa'}`}
+                            title={recordings.length > 0 ? `${recordings.length} opname${recordings.length !== 1 ? 's' : ''}` : 'Audio toevoegen'}
+                          >
+                            {recordings.length > 0 && (
                               <span className="text-xs font-bold mr-1">{recordings.length}</span>
-                              <svg className={`w-4 h-4 inline transition-transform ${isExpanded ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            )}
+                            <svg className={`w-4 h-4 inline transition-transform ${isExpanded ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              {recordings.length > 0 ? (
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                              </svg>
-                            </button>
-                          )}
+                              ) : (
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                              )}
+                            </svg>
+                          </button>
 
                           {/* Delete chapter */}
                           <button
@@ -776,7 +968,7 @@ export function AdminPage() {
 
                     {/* Expanded recordings list */}
                     <AnimatePresence>
-                      {isExpanded && recordings.length > 0 && (
+                      {isExpanded && (
                         <motion.div
                           initial={{ height: 0, opacity: 0 }}
                           animate={{ height: 'auto', opacity: 1 }}
@@ -784,37 +976,66 @@ export function AdminPage() {
                           className="border-t border-cream-dark bg-cream/50"
                         >
                           <div className="p-4 space-y-2">
-                            <p className="text-sm text-cocoa-light font-medium mb-2">Opnames:</p>
-                            {recordings.map((recording) => {
-                              const reader = users.find(u => u.id === recording.reader_id)
-                              return (
-                                <div key={recording.id} className="flex items-center gap-3 p-2 bg-white rounded-lg">
-                                  <Avatar
-                                    src={reader?.avatar_url}
-                                    name={reader?.name || 'Onbekend'}
-                                    size="sm"
+                            {recordings.length > 0 && (
+                              <>
+                                <p className="text-sm text-cocoa-light font-medium mb-2">Opnames:</p>
+                                {recordings.map((recording) => {
+                                  const reader = users.find(u => u.id === recording.reader_id)
+                                  return (
+                                    <div key={recording.id} className="flex items-center gap-3 p-2 bg-white rounded-lg">
+                                      <Avatar
+                                        src={reader?.avatar_url}
+                                        name={reader?.name || 'Onbekend'}
+                                        size="sm"
+                                      />
+                                      <div className="flex-1">
+                                        <p className="text-sm text-cocoa">{reader?.name || 'Onbekende voorlezer'}</p>
+                                        <p className="text-xs text-cocoa-light">
+                                          {recording.duration_seconds > 0
+                                            ? `${Math.floor(recording.duration_seconds / 60)}:${(recording.duration_seconds % 60).toString().padStart(2, '0')}`
+                                            : 'Duur onbekend'
+                                          }
+                                        </p>
+                                      </div>
+                                      <button
+                                        onClick={() => handleDeleteRecording(recording.id)}
+                                        className="p-2 text-cocoa-light hover:text-sunset transition-colors"
+                                        title="Opname verwijderen"
+                                      >
+                                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                        </svg>
+                                      </button>
+                                    </div>
+                                  )
+                                })}
+                              </>
+                            )}
+
+                            {/* Add audio button */}
+                            <button
+                              onClick={() => handleAudioFileSelect(chapter.id)}
+                              disabled={isUploadingAudio && uploadingChapterId === chapter.id}
+                              className="w-full p-3 border-2 border-dashed border-sky/50 rounded-lg text-sky hover:bg-sky-light/30 transition-colors flex items-center justify-center gap-2"
+                            >
+                              {isUploadingAudio && uploadingChapterId === chapter.id ? (
+                                <>
+                                  <motion.div
+                                    animate={{ rotate: 360 }}
+                                    transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                                    className="w-4 h-4 border-2 border-sky border-t-transparent rounded-full"
                                   />
-                                  <div className="flex-1">
-                                    <p className="text-sm text-cocoa">{reader?.name || 'Onbekende voorlezer'}</p>
-                                    <p className="text-xs text-cocoa-light">
-                                      {recording.duration_seconds > 0
-                                        ? `${Math.floor(recording.duration_seconds / 60)}:${(recording.duration_seconds % 60).toString().padStart(2, '0')}`
-                                        : 'Duur onbekend'
-                                      }
-                                    </p>
-                                  </div>
-                                  <button
-                                    onClick={() => handleDeleteRecording(recording.id)}
-                                    className="p-2 text-cocoa-light hover:text-sunset transition-colors"
-                                    title="Opname verwijderen"
-                                  >
-                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                    </svg>
-                                  </button>
-                                </div>
-                              )
-                            })}
+                                  Uploaden...
+                                </>
+                              ) : (
+                                <>
+                                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                                  </svg>
+                                  Audio toevoegen
+                                </>
+                              )}
+                            </button>
                           </div>
                         </motion.div>
                       )}
@@ -1215,6 +1436,74 @@ export function AdminPage() {
                   Opslaan
                 </Button>
               </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Hidden audio file input */}
+      <input
+        ref={audioFileInputRef}
+        type="file"
+        accept="audio/*"
+        onChange={handleAudioFileChange}
+        className="hidden"
+      />
+
+      {/* Reader selection modal for audio upload */}
+      <AnimatePresence>
+        {showReaderSelectModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={() => {
+              setShowReaderSelectModal(false)
+              setPendingAudioFile(null)
+              setUploadingChapterId(null)
+            }}
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 20 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-white rounded-[24px] shadow-floating p-6 max-w-md w-full"
+            >
+              <h2 className="font-display text-2xl text-cocoa mb-4">Wie heeft voorgelezen?</h2>
+              <p className="text-cocoa-light mb-4">
+                Selecteer de voorlezer voor deze audio-opname.
+              </p>
+
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {users.filter(u => u.role === 'reader' || u.role === 'admin').map((reader) => (
+                  <button
+                    key={reader.id}
+                    onClick={() => handleUploadAudioWithReader(reader.id)}
+                    className="w-full p-3 flex items-center gap-3 rounded-xl hover:bg-cream-dark/50 transition-colors"
+                  >
+                    <Avatar
+                      src={reader.avatar_url}
+                      name={reader.name}
+                      size="md"
+                    />
+                    <span className="text-cocoa font-medium">{reader.name}</span>
+                  </button>
+                ))}
+              </div>
+
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setShowReaderSelectModal(false)
+                  setPendingAudioFile(null)
+                  setUploadingChapterId(null)
+                }}
+                className="w-full mt-4"
+              >
+                Annuleren
+              </Button>
             </motion.div>
           </motion.div>
         )}

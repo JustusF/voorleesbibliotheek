@@ -1,17 +1,24 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from './ui'
-import { getChapterProgress, saveChapterProgress } from '../lib/storage'
+import { getChapterProgress, saveChapterProgress, getChapterWithRecordings } from '../lib/storage'
 import type { Recording, Chapter, Book, User } from '../types'
+
+interface ChapterWithRecordingStatus extends Chapter {
+  hasRecording: boolean
+  isCurrentChapter: boolean
+}
 
 interface AudioPlayerProps {
   recording: Recording
   chapter: Chapter
   book: Book
   reader: User
+  allChapters: Chapter[]
   onClose: () => void
   onNext?: () => void
   onPrevious?: () => void
+  onChapterSelect?: (chapter: Chapter) => void
 }
 
 export function AudioPlayer({
@@ -19,9 +26,11 @@ export function AudioPlayer({
   chapter,
   book,
   reader,
+  allChapters,
   onClose,
   onNext,
   onPrevious,
+  onChapterSelect,
 }: AudioPlayerProps) {
   const audioRef = useRef<HTMLAudioElement>(null)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -30,7 +39,17 @@ export function AudioPlayer({
   const [hasError, setHasError] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(recording.duration_seconds || 0)
+  const [showChapterList, setShowChapterList] = useState(false)
   const lastSaveRef = useRef(0)
+
+  // Build chapter list with recording status
+  const chaptersWithStatus: ChapterWithRecordingStatus[] = allChapters
+    .sort((a, b) => a.chapter_number - b.chapter_number)
+    .map(ch => ({
+      ...ch,
+      hasRecording: (getChapterWithRecordings(ch.id)?.recordings.length ?? 0) > 0,
+      isCurrentChapter: ch.id === chapter.id,
+    }))
 
   // Save progress periodically
   const saveProgress = useCallback(() => {
@@ -159,16 +178,32 @@ export function AudioPlayer({
         >
           <audio ref={audioRef} src={recording.audio_url} preload="metadata" />
 
-          {/* Close button */}
-          <button
-            onClick={onClose}
-            aria-label="Sluiten"
-            className="absolute top-4 right-4 w-12 h-12 rounded-full bg-cream-dark hover:bg-honey-light flex items-center justify-center transition-colors"
-          >
-            <svg className="w-6 h-6 text-cocoa" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+          {/* Top buttons row */}
+          <div className="absolute top-4 left-4 right-4 flex justify-between">
+            {/* Chapter list button */}
+            <button
+              onClick={() => setShowChapterList(!showChapterList)}
+              aria-label="Inhoudsopgave"
+              className={`w-12 h-12 rounded-full flex items-center justify-center transition-colors ${
+                showChapterList ? 'bg-sky text-white' : 'bg-cream-dark hover:bg-honey-light text-cocoa'
+              }`}
+            >
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+              </svg>
+            </button>
+
+            {/* Close button */}
+            <button
+              onClick={onClose}
+              aria-label="Sluiten"
+              className="w-12 h-12 rounded-full bg-cream-dark hover:bg-honey-light flex items-center justify-center transition-colors"
+            >
+              <svg className="w-6 h-6 text-cocoa" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
 
           {/* Loading overlay */}
           {isLoading && (
@@ -340,6 +375,85 @@ export function AudioPlayer({
               </svg>
             </Button>
           </div>
+
+          {/* Chapter list overlay */}
+          <AnimatePresence>
+            {showChapterList && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 20 }}
+                className="absolute inset-0 bg-white rounded-[32px] z-20 flex flex-col"
+              >
+                {/* Header */}
+                <div className="flex items-center justify-between p-4 border-b border-cream-dark">
+                  <h3 className="font-display text-xl text-cocoa">Inhoudsopgave</h3>
+                  <button
+                    onClick={() => setShowChapterList(false)}
+                    className="w-10 h-10 rounded-full bg-cream-dark hover:bg-honey-light flex items-center justify-center transition-colors"
+                  >
+                    <svg className="w-5 h-5 text-cocoa" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+
+                {/* Chapter list */}
+                <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                  {chaptersWithStatus.map((ch) => (
+                    <button
+                      key={ch.id}
+                      onClick={() => {
+                        if (ch.hasRecording && onChapterSelect && !ch.isCurrentChapter) {
+                          setShowChapterList(false)
+                          onChapterSelect(ch)
+                        }
+                      }}
+                      disabled={!ch.hasRecording || ch.isCurrentChapter}
+                      className={`w-full p-3 rounded-xl text-left flex items-center gap-3 transition-colors ${
+                        ch.isCurrentChapter
+                          ? 'bg-sky text-white'
+                          : ch.hasRecording
+                          ? 'bg-cream-dark/50 hover:bg-cream-dark text-cocoa'
+                          : 'bg-cream/50 text-cocoa-light opacity-50 cursor-not-allowed'
+                      }`}
+                    >
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-display text-sm ${
+                        ch.isCurrentChapter
+                          ? 'bg-white/20'
+                          : ch.hasRecording
+                          ? 'bg-sky-light'
+                          : 'bg-cream-dark'
+                      }`}>
+                        {ch.chapter_number}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className={`font-medium truncate ${ch.isCurrentChapter ? 'text-white' : ''}`}>
+                          {ch.title}
+                        </p>
+                        {ch.isCurrentChapter && (
+                          <p className="text-xs text-white/80">Nu aan het luisteren</p>
+                        )}
+                        {!ch.hasRecording && (
+                          <p className="text-xs">Nog niet ingelezen</p>
+                        )}
+                      </div>
+                      {ch.hasRecording && !ch.isCurrentChapter && (
+                        <svg className="w-5 h-5 text-cocoa-light" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                      )}
+                      {ch.isCurrentChapter && (
+                        <div className="flex items-center gap-1">
+                          <span className="w-2 h-2 bg-white rounded-full animate-pulse" />
+                        </div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </motion.div>
       </motion.div>
     </AnimatePresence>
