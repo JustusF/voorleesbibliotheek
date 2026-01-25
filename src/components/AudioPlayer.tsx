@@ -41,6 +41,8 @@ export function AudioPlayer({
   const [duration, setDuration] = useState(recording.duration_seconds || 0)
   const [showChapterList, setShowChapterList] = useState(false)
   const lastSaveRef = useRef(0)
+  const previousRecordingIdRef = useRef(recording.id)
+  const wasPlayingRef = useRef(false)
 
   // Build chapter list with recording status
   const chaptersWithStatus: ChapterWithRecordingStatus[] = allChapters
@@ -57,6 +59,33 @@ export function AudioPlayer({
       saveChapterProgress(chapter.id, recording.id, audioRef.current.currentTime, duration)
     }
   }, [chapter.id, recording.id, duration])
+
+  // Track if we should auto-play when chapter changes
+  useEffect(() => {
+    if (isPlaying) {
+      wasPlayingRef.current = true
+    }
+  }, [isPlaying])
+
+  // Auto-play when recording changes (e.g., after chapter ends and moves to next)
+  useEffect(() => {
+    if (previousRecordingIdRef.current !== recording.id) {
+      // Recording changed - if we were playing, auto-play the new one
+      if (wasPlayingRef.current && audioRef.current) {
+        setIsLoading(true)
+        audioRef.current.play().then(() => {
+          setIsPlaying(true)
+        }).catch(() => {
+          // Auto-play blocked, user needs to click play
+          setIsPlaying(false)
+        })
+      }
+      previousRecordingIdRef.current = recording.id
+      wasPlayingRef.current = false
+      lastSaveRef.current = 0
+      setCurrentTime(0)
+    }
+  }, [recording.id])
 
   // Load saved progress on mount
   useEffect(() => {
@@ -96,6 +125,10 @@ export function AudioPlayer({
     const handleEnded = () => {
       setIsPlaying(false)
       saveChapterProgress(chapter.id, recording.id, audio.duration, audio.duration)
+      // Auto-play next chapter if available
+      if (onNext) {
+        onNext()
+      }
     }
     const handleWaiting = () => setIsBuffering(true)
     const handleCanPlay = () => {
@@ -174,7 +207,7 @@ export function AudioPlayer({
           animate={{ scale: 1, y: 0 }}
           exit={{ scale: 0.9, y: 20 }}
           onClick={(e) => e.stopPropagation()}
-          className="bg-white rounded-[32px] shadow-floating p-8 max-w-md w-full"
+          className="bg-white rounded-[32px] shadow-floating p-8 max-w-md w-full relative"
         >
           <audio ref={audioRef} src={recording.audio_url} preload="metadata" />
 
