@@ -225,6 +225,7 @@ export function HomePage() {
             <div className="w-8 h-px bg-gradient-to-l from-transparent to-cocoa-light/30" />
           </div>
           <p className="text-xs text-cocoa-light/50 italic">Mogelijk gemaakt vanuit Kenia</p>
+          <p className="text-xs text-cocoa-light/30 mt-2">v{__APP_VERSION__}</p>
         </motion.div>
       </motion.div>
 
