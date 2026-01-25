@@ -19,6 +19,7 @@ import {
   getRecordingsForChapter,
   deleteRecording,
   addRecordingAsync,
+  forceResyncFromSupabase,
 } from '../lib/storage'
 import { extractChaptersFromImages } from '../lib/ocr'
 import type { Book, Chapter, User } from '../types'
@@ -39,10 +40,14 @@ export function AdminPage() {
   const [showEditReader, setShowEditReader] = useState(false)
   const [newBookTitle, setNewBookTitle] = useState('')
   const [newBookAuthor, setNewBookAuthor] = useState('')
+  const [newBookCover, setNewBookCover] = useState<string | null>(null)
   const [newChaptersText, setNewChaptersText] = useState('')
   const [isSearchingChapters, setIsSearchingChapters] = useState(false)
+  const [isSearchingCover, setIsSearchingCover] = useState(false)
   const [editBookTitle, setEditBookTitle] = useState('')
   const [editBookAuthor, setEditBookAuthor] = useState('')
+  const [editBookCover, setEditBookCover] = useState<string | null>(null)
+  const [isSearchingEditCover, setIsSearchingEditCover] = useState(false)
   const [, setEditChaptersText] = useState('')
   const [newChapterTitle, setNewChapterTitle] = useState('')
   const [newReaderName, setNewReaderName] = useState('')
@@ -73,6 +78,31 @@ export function AdminPage() {
     message: '',
     onConfirm: () => {},
   })
+
+  // Resync state
+  const [isResyncing, setIsResyncing] = useState(false)
+  const [resyncMessage, setResyncMessage] = useState<string | null>(null)
+
+  const handleResync = async () => {
+    setIsResyncing(true)
+    setResyncMessage(null)
+    try {
+      const result = await forceResyncFromSupabase()
+      setResyncMessage(result.message)
+      // Refresh all data
+      setBooks(getBooks())
+      setUsers(getUsers())
+      if (selectedBook) {
+        setChapters(getChaptersForBook(selectedBook.id))
+      }
+    } catch (error) {
+      setResyncMessage('Fout bij hersynchroniseren: ' + (error instanceof Error ? error.message : 'Onbekende fout'))
+    } finally {
+      setIsResyncing(false)
+      // Clear message after 5 seconds
+      setTimeout(() => setResyncMessage(null), 5000)
+    }
+  }
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const editFileInputRef = useRef<HTMLInputElement>(null)
@@ -207,6 +237,42 @@ export function AdminPage() {
     ]
   }
 
+  // Search for book cover using Google Books API
+  const searchBookCover = async (title: string, author?: string): Promise<string | null> => {
+    try {
+      const searchQuery = encodeURIComponent(
+        author ? `${title} ${author}` : title
+      )
+      const response = await fetch(
+        `https://www.googleapis.com/books/v1/volumes?q=${searchQuery}&maxResults=5`
+      )
+      const data = await response.json()
+
+      if (data.items && data.items.length > 0) {
+        for (const book of data.items) {
+          const imageLinks = book.volumeInfo?.imageLinks
+          if (imageLinks) {
+            // Prefer larger images, use HTTPS
+            const coverUrl = (
+              imageLinks.extraLarge ||
+              imageLinks.large ||
+              imageLinks.medium ||
+              imageLinks.thumbnail ||
+              imageLinks.smallThumbnail
+            )?.replace('http://', 'https://')
+            if (coverUrl) {
+              return coverUrl
+            }
+          }
+        }
+      }
+      return null
+    } catch (error) {
+      console.error('Error fetching book cover:', error)
+      return null
+    }
+  }
+
   const searchChaptersOnline = async () => {
     if (!newBookTitle.trim()) {
       alert('Vul eerst een boektitel in')
@@ -313,6 +379,18 @@ export function AdminPage() {
     }
   }
 
+  // Auto-fetch cover when title changes (debounced)
+  const handleSearchCover = async () => {
+    if (!newBookTitle.trim()) return
+
+    setIsSearchingCover(true)
+    const cover = await searchBookCover(newBookTitle.trim(), newBookAuthor.trim() || undefined)
+    if (cover) {
+      setNewBookCover(cover)
+    }
+    setIsSearchingCover(false)
+  }
+
   const parseChaptersText = (text: string): string[] => {
     return text
       .split('\n')
@@ -331,7 +409,11 @@ export function AdminPage() {
 
     const chaptersArray = parseChaptersText(newChaptersText)
 
-    const book = addBook(newBookTitle.trim(), newBookAuthor.trim() || undefined)
+    const book = addBook(
+      newBookTitle.trim(),
+      newBookAuthor.trim() || undefined,
+      newBookCover || undefined
+    )
     if (chaptersArray.length > 0) {
       addChapters(book.id, chaptersArray)
     }
@@ -339,6 +421,7 @@ export function AdminPage() {
     setBooks(getBooks())
     setNewBookTitle('')
     setNewBookAuthor('')
+    setNewBookCover(null)
     setNewChaptersText('')
     setShowAddBook(false)
   }
@@ -347,22 +430,35 @@ export function AdminPage() {
     setSelectedBook(book)
     setEditBookTitle(book.title)
     setEditBookAuthor(book.author || '')
+    setEditBookCover(book.cover_url)
     const bookChapters = getChaptersForBook(book.id)
     setEditChaptersText(bookChapters.map(c => c.title).join('\n'))
     setShowEditBook(true)
   }
 
+  const handleSearchEditCover = async () => {
+    if (!editBookTitle.trim()) return
+
+    setIsSearchingEditCover(true)
+    const cover = await searchBookCover(editBookTitle.trim(), editBookAuthor.trim() || undefined)
+    if (cover) {
+      setEditBookCover(cover)
+    }
+    setIsSearchingEditCover(false)
+  }
+
   const handleSaveBook = () => {
     if (!selectedBook || !editBookTitle.trim()) return
 
-    // Update book title and author
+    // Update book title, author and cover
     updateBook(selectedBook.id, {
       title: editBookTitle.trim(),
-      author: editBookAuthor.trim() || null
+      author: editBookAuthor.trim() || null,
+      cover_url: editBookCover
     })
 
     setBooks(getBooks())
-    setSelectedBook({ ...selectedBook, title: editBookTitle.trim(), author: editBookAuthor.trim() || null })
+    setSelectedBook({ ...selectedBook, title: editBookTitle.trim(), author: editBookAuthor.trim() || null, cover_url: editBookCover })
     setShowEditBook(false)
   }
 
@@ -667,7 +763,7 @@ export function AdminPage() {
       </motion.header>
 
       {/* Tabs */}
-      <div className="flex gap-2 mb-8">
+      <div className="flex flex-wrap gap-2 mb-4">
         <Button
           variant={tab === 'books' ? 'primary' : 'ghost'}
           onClick={() => { setTab('books'); setSelectedBook(null) }}
@@ -680,7 +776,43 @@ export function AdminPage() {
         >
           Voorlezers
         </Button>
+        <div className="flex-1" />
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleResync}
+          disabled={isResyncing}
+          className="text-cocoa-light"
+        >
+          {isResyncing ? (
+            <>
+              <svg className="w-4 h-4 mr-1 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              Herstellen...
+            </>
+          ) : (
+            <>
+              <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              Herstel data
+            </>
+          )}
+        </Button>
       </div>
+
+      {/* Resync message */}
+      {resyncMessage && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-4 p-3 bg-sky-light rounded-xl text-sm text-cocoa"
+        >
+          {resyncMessage}
+        </motion.div>
+      )}
 
       {/* Books Tab */}
       {tab === 'books' && !selectedBook && (
@@ -1148,7 +1280,7 @@ export function AdminPage() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-            onClick={() => setShowAddBook(false)}
+            onClick={() => { setShowAddBook(false); setNewBookCover(null) }}
           >
             <motion.div
               initial={{ scale: 0.95, y: 20 }}
@@ -1184,6 +1316,61 @@ export function AdminPage() {
                     placeholder="Bijv. Max Velthuijs"
                     className="w-full px-4 py-3 rounded-xl border-2 border-cream-dark focus:border-honey outline-none transition-colors"
                   />
+                </div>
+
+                {/* Cover art section */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-sm font-medium text-cocoa">
+                      Boekomslag
+                    </label>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={handleSearchCover}
+                      disabled={isSearchingCover || !newBookTitle.trim()}
+                    >
+                      {isSearchingCover ? (
+                        <>
+                          <motion.div
+                            animate={{ rotate: 360 }}
+                            transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                            className="w-4 h-4 border-2 border-cocoa-light border-t-transparent rounded-full mr-2"
+                          />
+                          Zoeken...
+                        </>
+                      ) : (
+                        <>
+                          <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                          </svg>
+                          Zoek cover
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                  {newBookCover ? (
+                    <div className="flex items-center gap-4 p-3 bg-cream rounded-xl">
+                      <img
+                        src={newBookCover}
+                        alt="Boekomslag"
+                        className="w-16 h-20 object-cover rounded-lg shadow-sm"
+                      />
+                      <div className="flex-1">
+                        <p className="text-sm text-cocoa">Cover gevonden</p>
+                        <button
+                          onClick={() => setNewBookCover(null)}
+                          className="text-sm text-sunset hover:underline"
+                        >
+                          Verwijderen
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-cocoa-light">
+                      Klik op "Zoek cover" om automatisch een boekomslag te vinden
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -1230,7 +1417,7 @@ export function AdminPage() {
               </div>
 
               <div className="flex gap-3 mt-6">
-                <Button variant="ghost" onClick={() => setShowAddBook(false)} className="flex-1">
+                <Button variant="ghost" onClick={() => { setShowAddBook(false); setNewBookCover(null) }} className="flex-1">
                   Annuleren
                 </Button>
                 <Button variant="primary" onClick={handleAddBook} className="flex-1">
@@ -1286,6 +1473,61 @@ export function AdminPage() {
                     placeholder="Bijv. Max Velthuijs"
                     className="w-full px-4 py-3 rounded-xl border-2 border-cream-dark focus:border-honey outline-none transition-colors"
                   />
+                </div>
+
+                {/* Cover art section */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-sm font-medium text-cocoa">
+                      Boekomslag
+                    </label>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={handleSearchEditCover}
+                      disabled={isSearchingEditCover || !editBookTitle.trim()}
+                    >
+                      {isSearchingEditCover ? (
+                        <>
+                          <motion.div
+                            animate={{ rotate: 360 }}
+                            transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                            className="w-4 h-4 border-2 border-cocoa-light border-t-transparent rounded-full mr-2"
+                          />
+                          Zoeken...
+                        </>
+                      ) : (
+                        <>
+                          <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                          </svg>
+                          Zoek cover
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                  {editBookCover ? (
+                    <div className="flex items-center gap-4 p-3 bg-cream rounded-xl">
+                      <img
+                        src={editBookCover}
+                        alt="Boekomslag"
+                        className="w-16 h-20 object-cover rounded-lg shadow-sm"
+                      />
+                      <div className="flex-1">
+                        <p className="text-sm text-cocoa">Boekomslag ingesteld</p>
+                        <button
+                          onClick={() => setEditBookCover(null)}
+                          className="text-sm text-sunset hover:underline"
+                        >
+                          Verwijderen
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-cocoa-light">
+                      Geen boekomslag. Klik op "Zoek cover" om er een te vinden.
+                    </p>
+                  )}
                 </div>
 
                 <div className="bg-cream rounded-xl p-4">

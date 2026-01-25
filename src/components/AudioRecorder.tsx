@@ -7,7 +7,7 @@ interface AudioRecorderProps {
   onCancel: () => void
 }
 
-type RecordingState = 'idle' | 'requesting_permission' | 'permission_denied' | 'recording' | 'recorded' | 'playing'
+type RecordingState = 'idle' | 'requesting_permission' | 'permission_denied' | 'recording' | 'paused' | 'recorded' | 'playing'
 
 export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderProps) {
   const [state, setState] = useState<RecordingState>('idle')
@@ -134,12 +134,54 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
   }, [])
 
   const stopRecording = useCallback(() => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+    if (mediaRecorderRef.current && (mediaRecorderRef.current.state === 'recording' || mediaRecorderRef.current.state === 'paused')) {
       mediaRecorderRef.current.stop()
       if (timerRef.current) {
         clearInterval(timerRef.current)
         timerRef.current = null
       }
+    }
+  }, [])
+
+  const pauseRecording = useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.pause()
+      setState('paused')
+      if (timerRef.current) {
+        clearInterval(timerRef.current)
+        timerRef.current = null
+      }
+      // Stop audio level animation while paused
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current)
+        animationRef.current = null
+      }
+    }
+  }, [])
+
+  const resumeRecording = useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'paused') {
+      mediaRecorderRef.current.resume()
+      setState('recording')
+      // Resume timer
+      timerRef.current = setInterval(() => {
+        setDuration(d => d + 1)
+      }, 1000)
+      // Resume audio level animation
+      const updateLevels = () => {
+        if (analyserRef.current) {
+          const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount)
+          analyserRef.current.getByteFrequencyData(dataArray)
+          const levels: number[] = []
+          const step = Math.floor(dataArray.length / 20)
+          for (let i = 0; i < 20; i++) {
+            levels.push(dataArray[i * step] / 255)
+          }
+          setAudioLevels(levels)
+        }
+        animationRef.current = requestAnimationFrame(updateLevels)
+      }
+      updateLevels()
     }
   }, [])
 
@@ -190,6 +232,7 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
           {state === 'requesting_permission' && 'Even geduld...'}
           {state === 'permission_denied' && 'Microfoon nodig'}
           {state === 'recording' && 'Aan het opnemen...'}
+          {state === 'paused' && 'Gepauzeerd'}
           {(state === 'recorded' || state === 'playing') && 'Opname klaar!'}
         </h2>
         <p className="text-cocoa-light">
@@ -197,6 +240,7 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
           {state === 'requesting_permission' && 'We vragen toegang tot je microfoon...'}
           {state === 'permission_denied' && permissionError}
           {state === 'recording' && 'Spreek duidelijk in de microfoon'}
+          {state === 'paused' && 'Druk op de knop om verder te gaan'}
           {(state === 'recorded' || state === 'playing') && 'Beluister je opname hieronder'}
         </p>
       </div>
@@ -217,13 +261,13 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
       </div>
 
       {/* Audio waveform visualization */}
-      {state === 'recording' && (
+      {(state === 'recording' || state === 'paused') && (
         <div className="flex items-center justify-center gap-1 h-16 mb-6" aria-hidden="true" role="presentation">
           {audioLevels.map((level, i) => (
             <motion.div
               key={i}
-              className="w-2 bg-gradient-to-t from-sunset to-honey rounded-full"
-              animate={{ height: Math.max(8, level * 60) }}
+              className={`w-2 rounded-full ${state === 'paused' ? 'bg-cocoa-light' : 'bg-gradient-to-t from-sunset to-honey'}`}
+              animate={{ height: state === 'paused' ? 8 : Math.max(8, level * 60) }}
               transition={{ duration: 0.05 }}
             />
           ))}
@@ -231,7 +275,7 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
       )}
 
       {/* Spacer when not recording */}
-      {state !== 'recording' && <div className="h-4 mb-4" />}
+      {state !== 'recording' && state !== 'paused' && <div className="h-4 mb-4" />}
 
       {/* Main control */}
       <div className="flex justify-center mb-8" role="group" aria-label="Opname bediening">
@@ -255,14 +299,41 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
         )}
 
         {state === 'recording' && (
-          <div className="relative">
-            {/* Pulsing ring */}
-            <motion.div
-              className="absolute inset-0 rounded-[32px] bg-sunset pointer-events-none"
-              animate={{ scale: [1, 1.3], opacity: [0.5, 0] }}
-              transition={{ duration: 1, repeat: Infinity }}
-              aria-hidden="true"
-            />
+          <div className="flex items-center gap-4">
+            {/* Pause button */}
+            <Button variant="ghost" size="lg" onClick={pauseRecording} aria-label="Pauzeer opname">
+              <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
+              </svg>
+            </Button>
+
+            {/* Stop button with pulsing ring */}
+            <div className="relative">
+              <motion.div
+                className="absolute inset-0 rounded-[32px] bg-sunset pointer-events-none"
+                animate={{ scale: [1, 1.3], opacity: [0.5, 0] }}
+                transition={{ duration: 1, repeat: Infinity }}
+                aria-hidden="true"
+              />
+              <Button variant="record" size="xl" onClick={stopRecording} aria-label="Stop opname">
+                <svg className="w-10 h-10" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <rect x="6" y="6" width="12" height="12" rx="2" />
+                </svg>
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {state === 'paused' && (
+          <div className="flex items-center gap-4">
+            {/* Resume button */}
+            <Button variant="primary" size="lg" onClick={resumeRecording} aria-label="Hervat opname">
+              <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+            </Button>
+
+            {/* Stop button */}
             <Button variant="record" size="xl" onClick={stopRecording} aria-label="Stop opname">
               <svg className="w-10 h-10" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <rect x="6" y="6" width="12" height="12" rx="2" />
@@ -300,12 +371,23 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
         )}
 
         {state === 'recording' && (
-          <Button variant="primary" onClick={stopRecording}>
-            <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 24 24">
-              <rect x="6" y="6" width="12" height="12" rx="2" />
-            </svg>
-            Stop opname
+          <Button variant="ghost" onClick={onCancel}>
+            Annuleren
           </Button>
+        )}
+
+        {state === 'paused' && (
+          <>
+            <Button variant="ghost" onClick={onCancel}>
+              Annuleren
+            </Button>
+            <Button variant="primary" onClick={resumeRecording}>
+              <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+              Verder opnemen
+            </Button>
+          </>
         )}
 
         {(state === 'recorded' || state === 'playing') && (

@@ -193,6 +193,11 @@ export function getBooks(): Book[] {
   return loadFromStorage(STORAGE_KEYS.books, [])
 }
 
+export function getBook(bookId: string): Book | undefined {
+  return loadFromStorage<Book[]>(STORAGE_KEYS.books, [])
+    .find(b => b.id === bookId)
+}
+
 export async function addBookAsync(title: string, author?: string, coverUrl?: string): Promise<Book> {
   const newBook: Book = {
     id: crypto.randomUUID(),
@@ -383,6 +388,11 @@ export function getChaptersForBook(bookId: string): Chapter[] {
     .sort((a, b) => a.chapter_number - b.chapter_number)
 }
 
+export function getChapter(chapterId: string): Chapter | undefined {
+  return loadFromStorage<Chapter[]>(STORAGE_KEYS.chapters, [])
+    .find(c => c.id === chapterId)
+}
+
 export async function addChapterAsync(bookId: string, chapterNumber: number, title: string): Promise<Chapter> {
   const newChapter: Chapter = {
     id: crypto.randomUUID(),
@@ -552,6 +562,10 @@ export function getRecordings(): Recording[] {
 
 export function getRecordingsForChapter(chapterId: string): Recording[] {
   return loadFromStorage<Recording[]>(STORAGE_KEYS.recordings, []).filter(r => r.chapter_id === chapterId)
+}
+
+export function getRecordingsForReader(readerId: string): Recording[] {
+  return loadFromStorage<Recording[]>(STORAGE_KEYS.recordings, []).filter(r => r.reader_id === readerId)
 }
 
 // Upload audio to Supabase Storage
@@ -1124,6 +1138,34 @@ export async function syncFromSupabase(): Promise<void> {
   }
 
   console.log('Sync from Supabase complete!')
+}
+
+// Force a complete resync from Supabase (clears local data first)
+export async function forceResyncFromSupabase(): Promise<{ success: boolean; message: string }> {
+  if (!isSupabaseConfigured || !supabase) {
+    return { success: false, message: 'Supabase is niet geconfigureerd' }
+  }
+
+  console.log('Force resyncing from Supabase - clearing local data first...')
+
+  // Clear all local data
+  localStorage.removeItem(STORAGE_KEYS.books)
+  localStorage.removeItem(STORAGE_KEYS.chapters)
+  localStorage.removeItem(STORAGE_KEYS.recordings)
+  localStorage.removeItem(STORAGE_KEYS.progress)
+  localStorage.removeItem(PENDING_OPS_KEY)
+
+  // Now sync fresh from Supabase
+  await syncFromSupabase()
+
+  const books = getBooks()
+  const chapters = getChapters()
+  const recordings = getRecordings()
+
+  return {
+    success: true,
+    message: `Hersynchronisatie voltooid: ${books.length} boeken, ${chapters.length} hoofdstukken, ${recordings.length} opnames`,
+  }
 }
 
 // Clean up orphaned data (recordings without chapters, chapters without books)

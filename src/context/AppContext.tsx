@@ -15,6 +15,7 @@ import {
   subscribeToChapters,
   subscribeToRecordings,
   subscribeToProgress,
+  syncFromSupabase,
 } from '../lib/storage'
 import type { Book, Chapter, Recording, User } from '../types'
 
@@ -302,9 +303,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
       dispatch({ type: 'SET_USERS', payload: getUsers() })
       dispatch({ type: 'SET_PROGRESS', payload: getProgress() })
 
-      // Then sync from Supabase in background
+      // Sync from Supabase (source of truth) - this updates localStorage
       if (isSupabaseConfigured && state.isOnline) {
-        await refreshData()
+        dispatch({ type: 'SET_SYNC_STATUS', payload: 'syncing' })
+        try {
+          await syncFromSupabase()
+          // Reload data from localStorage (now updated with Supabase data)
+          dispatch({ type: 'SET_BOOKS', payload: getBooks() })
+          dispatch({ type: 'SET_CHAPTERS', payload: getChapters() })
+          dispatch({ type: 'SET_RECORDINGS', payload: getRecordings() })
+          dispatch({ type: 'SET_USERS', payload: getUsers() })
+          dispatch({ type: 'SET_SYNC_STATUS', payload: 'success' })
+          setTimeout(() => dispatch({ type: 'SET_SYNC_STATUS', payload: 'idle' }), 2000)
+        } catch (error) {
+          console.error('Failed to sync from Supabase:', error)
+          dispatch({ type: 'SET_SYNC_STATUS', payload: 'error' })
+          setTimeout(() => dispatch({ type: 'SET_SYNC_STATUS', payload: 'idle' }), 3000)
+        }
       }
 
       dispatch({ type: 'SET_INITIALIZED' })

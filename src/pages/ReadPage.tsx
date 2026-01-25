@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
-import { Button, CloudDecoration, Avatar, Card } from '../components/ui'
+import { Button, CloudDecoration, Avatar, Card, ConfirmDialog } from '../components/ui'
 import { AudioRecorder } from '../components/AudioRecorder'
 import { FileUpload } from '../components/FileUpload'
-import { getBooks, getUsers, addRecording, addBook, getOrCreateNextChapter, getChaptersForBook } from '../lib/storage'
-import type { Book, Chapter, User } from '../types'
+import { getBooks, getBook, getUsers, addRecording, addBook, getOrCreateNextChapter, getChaptersForBook, getRecordingsForChapter, updateChapter, getRecordingsForReader, getChapter } from '../lib/storage'
+import type { Book, Chapter, User, Recording } from '../types'
 
 type Step = 'reader' | 'book' | 'chapter' | 'record' | 'success'
 type RecordMode = 'record' | 'upload' | null
@@ -24,6 +24,18 @@ export function ReadPage() {
   const [currentChapter, setCurrentChapter] = useState<Chapter | null>(null)
   const [bookChapters, setBookChapters] = useState<Chapter[]>([])
 
+  // Overwrite confirmation state
+  const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false)
+  const [pendingChapter, setPendingChapter] = useState<Chapter | null>(null)
+
+  // Chapter editing state
+  const [editingChapter, setEditingChapter] = useState<Chapter | null>(null)
+  const [editChapterTitle, setEditChapterTitle] = useState('')
+
+  // Reader dashboard state
+  const [showDashboard, setShowDashboard] = useState(false)
+  const [readerRecordings, setReaderRecordings] = useState<Recording[]>([])
+
   useEffect(() => {
     setBooks(getBooks())
     setUsers(getUsers())
@@ -31,6 +43,7 @@ export function ReadPage() {
 
   const handleReaderSelect = (reader: User) => {
     setSelectedReader(reader)
+    setReaderRecordings(getRecordingsForReader(reader.id))
     setStep('book')
   }
 
@@ -44,8 +57,53 @@ export function ReadPage() {
   }
 
   const handleChapterSelect = (chapter: Chapter) => {
-    setCurrentChapter(chapter)
-    setStep('record')
+    // Check if chapter already has recordings
+    const existingRecordings = getRecordingsForChapter(chapter.id)
+    if (existingRecordings.length > 0) {
+      // Show confirmation dialog
+      setPendingChapter(chapter)
+      setShowOverwriteConfirm(true)
+    } else {
+      // No existing recordings, proceed directly
+      setCurrentChapter(chapter)
+      setStep('record')
+    }
+  }
+
+  const handleConfirmOverwrite = () => {
+    if (pendingChapter) {
+      setCurrentChapter(pendingChapter)
+      setPendingChapter(null)
+      setStep('record')
+    }
+    setShowOverwriteConfirm(false)
+  }
+
+  const handleCancelOverwrite = () => {
+    setPendingChapter(null)
+    setShowOverwriteConfirm(false)
+  }
+
+  // Chapter editing functions
+  const handleEditChapter = (chapter: Chapter, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setEditingChapter(chapter)
+    setEditChapterTitle(chapter.title)
+  }
+
+  const handleSaveChapterEdit = () => {
+    if (!editingChapter || !editChapterTitle.trim()) return
+    updateChapter(editingChapter.id, { title: editChapterTitle.trim() })
+    if (selectedBook) {
+      setBookChapters(getChaptersForBook(selectedBook.id))
+    }
+    setEditingChapter(null)
+    setEditChapterTitle('')
+  }
+
+  const handleCancelChapterEdit = () => {
+    setEditingChapter(null)
+    setEditChapterTitle('')
   }
 
   const handleNewChapter = () => {
@@ -77,6 +135,8 @@ export function ReadPage() {
     reader.onloadend = () => {
       const audioUrl = reader.result as string
       addRecording(currentChapter.id, selectedReader.id, audioUrl, duration)
+      // Refresh reader's recordings for dashboard
+      setReaderRecordings(getRecordingsForReader(selectedReader.id))
       setStep('success')
     }
     reader.readAsDataURL(blob)
@@ -91,6 +151,8 @@ export function ReadPage() {
       const audioUrl = reader.result as string
       // Estimate duration (will be updated when played)
       addRecording(currentChapter.id, selectedReader.id, audioUrl, 0)
+      // Refresh reader's recordings for dashboard
+      setReaderRecordings(getRecordingsForReader(selectedReader.id))
       setStep('success')
     }
     reader.readAsDataURL(file)
@@ -157,12 +219,12 @@ export function ReadPage() {
         animate={{ opacity: 1, y: 0 }}
         className="flex items-center gap-4 mb-8 relative z-10"
       >
-        <Button variant="ghost" onClick={handleBack} className="!min-w-0 !min-h-0 p-3">
-          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <Button variant="ghost" onClick={handleBack} className="!min-w-0 !min-h-0 p-4">
+          <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
         </Button>
-        <h1 className="font-display text-3xl text-cocoa">
+        <h1 className="font-display text-3xl md:text-4xl text-cocoa">
           {step === 'reader' && 'Wie ben jij?'}
           {step === 'book' && 'Welk boek ga je voorlezen?'}
           {step === 'chapter' && 'Welk hoofdstuk?'}
@@ -221,22 +283,22 @@ export function ReadPage() {
             exit={{ opacity: 0, x: -20 }}
             className="max-w-2xl mx-auto"
           >
-            <p className="text-center text-cocoa-light mb-6">Kies je naam zodat de kinderen weten wie voorleest</p>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+            <p className="text-center text-cocoa-light text-lg mb-8">Kies je naam zodat de kinderen weten wie voorleest</p>
+            <div className="grid grid-cols-2 gap-4 md:gap-6">
               {users.map((user) => (
                 <motion.button
                   key={user.id}
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
                   onClick={() => handleReaderSelect(user)}
-                  className="p-4 bg-white rounded-[20px] shadow-soft hover:shadow-lifted flex flex-col items-center gap-3 transition-shadow"
+                  className="p-6 bg-white rounded-[24px] shadow-soft hover:shadow-lifted flex flex-col items-center gap-4 transition-shadow"
                 >
                   <Avatar
                     src={user.avatar_url}
                     name={user.name}
-                    size="lg"
+                    size="xl"
                   />
-                  <span className="font-display text-lg text-cocoa">{user.name}</span>
+                  <span className="font-display text-xl md:text-2xl text-cocoa">{user.name}</span>
                 </motion.button>
               ))}
             </div>
@@ -255,9 +317,61 @@ export function ReadPage() {
             {selectedReader && (
               <div className="flex items-center gap-3 mb-6 p-3 bg-white/50 rounded-xl">
                 <Avatar src={selectedReader.avatar_url} name={selectedReader.name} size="sm" />
-                <span className="text-cocoa">Voorlezer: <strong>{selectedReader.name}</strong></span>
+                <span className="text-cocoa flex-1">Voorlezer: <strong>{selectedReader.name}</strong></span>
+                {readerRecordings.length > 0 && (
+                  <button
+                    onClick={() => setShowDashboard(!showDashboard)}
+                    className="text-sm text-honey font-medium flex items-center gap-1 hover:underline"
+                  >
+                    {readerRecordings.length} opname{readerRecordings.length !== 1 ? 's' : ''}
+                    <svg className={`w-4 h-4 transition-transform ${showDashboard ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                )}
               </div>
             )}
+
+            {/* Reader's recordings dashboard */}
+            <AnimatePresence>
+              {showDashboard && readerRecordings.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="mb-6 overflow-hidden"
+                >
+                  <div className="bg-white rounded-[20px] p-4 shadow-soft">
+                    <h3 className="font-display text-lg text-cocoa mb-3">Jouw opnames</h3>
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                      {readerRecordings.slice().reverse().map((recording) => {
+                        const chapter = getChapter(recording.chapter_id)
+                        const book = chapter ? getBook(chapter.book_id) : undefined
+                        const mins = Math.floor(recording.duration_seconds / 60)
+                        const secs = recording.duration_seconds % 60
+                        const durationText = `${mins}:${secs.toString().padStart(2, '0')}`
+
+                        return (
+                          <div key={recording.id} className="flex items-center gap-3 p-2 rounded-lg bg-cream/50">
+                            <div className="w-8 h-8 rounded-lg bg-moss/20 flex items-center justify-center text-sm">
+                              ✓
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-medium text-cocoa text-sm truncate">
+                                {chapter?.title || 'Hoofdstuk'}
+                              </p>
+                              <p className="text-xs text-cocoa-light truncate">
+                                {book?.title || 'Onbekend boek'} • {durationText}
+                              </p>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             <div className="space-y-3">
               {/* Add new book button - always visible at top */}
@@ -402,24 +516,84 @@ export function ReadPage() {
               {/* Existing chapters */}
               {bookChapters.length > 0 && (
                 <div className="pt-2">
-                  <p className="text-cocoa-light text-sm mb-3 px-1">Of voeg audio toe aan een bestaand hoofdstuk:</p>
-                  {bookChapters.map((chapter) => (
-                    <motion.button
-                      key={chapter.id}
-                      whileHover={{ scale: 1.02, x: 4 }}
-                      whileTap={{ scale: 0.98 }}
-                      onClick={() => handleChapterSelect(chapter)}
-                      className="w-full p-5 bg-white rounded-[20px] shadow-soft hover:shadow-lifted text-left flex items-center gap-4 transition-shadow mb-3"
-                    >
-                      <div className="w-12 h-12 rounded-[12px] bg-sky-light flex items-center justify-center font-display text-xl text-cocoa">
-                        {chapter.chapter_number}
-                      </div>
-                      <span className="font-display text-xl text-cocoa">{chapter.title}</span>
-                      <svg className="w-6 h-6 text-cocoa-light ml-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                      </svg>
-                    </motion.button>
-                  ))}
+                  <p className="text-cocoa-light text-base mb-4 px-1">Of voeg audio toe aan een bestaand hoofdstuk:</p>
+                  {bookChapters.map((chapter) => {
+                    const recordings = getRecordingsForChapter(chapter.id)
+                    const hasRecording = recordings.length > 0
+                    const isEditing = editingChapter?.id === chapter.id
+
+                    if (isEditing) {
+                      return (
+                        <div key={chapter.id} className="w-full p-5 bg-white rounded-[20px] shadow-lifted mb-3">
+                          <div className="flex items-center gap-3 mb-3">
+                            <div className="w-14 h-14 rounded-[14px] bg-sky-light flex items-center justify-center font-display text-2xl text-cocoa">
+                              {chapter.chapter_number}
+                            </div>
+                            <input
+                              type="text"
+                              value={editChapterTitle}
+                              onChange={(e) => setEditChapterTitle(e.target.value)}
+                              className="flex-1 px-4 py-3 text-lg rounded-xl border-2 border-honey focus:outline-none"
+                              autoFocus
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleSaveChapterEdit()
+                                if (e.key === 'Escape') handleCancelChapterEdit()
+                              }}
+                            />
+                          </div>
+                          <div className="flex gap-2 justify-end">
+                            <Button variant="ghost" size="sm" onClick={handleCancelChapterEdit}>
+                              Annuleren
+                            </Button>
+                            <Button variant="primary" size="sm" onClick={handleSaveChapterEdit}>
+                              Opslaan
+                            </Button>
+                          </div>
+                        </div>
+                      )
+                    }
+
+                    return (
+                      <motion.div
+                        key={chapter.id}
+                        whileHover={{ scale: 1.01 }}
+                        className="w-full p-5 bg-white rounded-[20px] shadow-soft hover:shadow-lifted flex items-center gap-4 transition-shadow mb-3"
+                      >
+                        <button
+                          onClick={() => handleChapterSelect(chapter)}
+                          className="flex-1 flex items-center gap-4 text-left"
+                        >
+                          <div className={`w-14 h-14 rounded-[14px] flex items-center justify-center font-display text-2xl text-cocoa ${hasRecording ? 'bg-moss/20' : 'bg-sky-light'}`}>
+                            {hasRecording ? '✓' : chapter.chapter_number}
+                          </div>
+                          <div className="flex-1">
+                            <span className="font-display text-xl text-cocoa block">{chapter.title}</span>
+                            {hasRecording && (
+                              <span className="text-sm text-moss">Heeft al een opname</span>
+                            )}
+                          </div>
+                        </button>
+                        {/* Edit button */}
+                        <button
+                          onClick={(e) => handleEditChapter(chapter, e)}
+                          className="p-3 rounded-xl hover:bg-cream-dark transition-colors"
+                          title="Titel bewerken"
+                        >
+                          <svg className="w-6 h-6 text-cocoa-light" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                          </svg>
+                        </button>
+                        <button
+                          onClick={() => handleChapterSelect(chapter)}
+                          className="p-3 rounded-xl hover:bg-cream-dark transition-colors"
+                        >
+                          <svg className="w-6 h-6 text-cocoa-light" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                        </button>
+                      </motion.div>
+                    )
+                  })}
                 </div>
               )}
             </div>
@@ -454,11 +628,11 @@ export function ReadPage() {
               <div className="space-y-4">
                 <Button
                   variant="record"
-                  size="lg"
+                  size="xl"
                   onClick={() => setRecordMode('record')}
-                  className="w-full"
+                  className="w-full text-xl py-6"
                 >
-                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
                   </svg>
                   Direct opnemen
@@ -468,7 +642,7 @@ export function ReadPage() {
                   variant="secondary"
                   size="lg"
                   onClick={() => setRecordMode('upload')}
-                  className="w-full"
+                  className="w-full text-lg py-5"
                 >
                   <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
@@ -557,6 +731,18 @@ export function ReadPage() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Overwrite confirmation dialog */}
+      <ConfirmDialog
+        isOpen={showOverwriteConfirm}
+        onClose={handleCancelOverwrite}
+        onConfirm={handleConfirmOverwrite}
+        title="Bestaande opname vervangen?"
+        message={`Dit hoofdstuk heeft al een opname. Als je een nieuwe opname maakt, wordt de oude opname vervangen. Weet je dit zeker?`}
+        confirmText="Ja, nieuwe opname"
+        cancelText="Nee, annuleren"
+        variant="default"
+      />
     </div>
   )
 }
