@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
-import { Button, Card, Avatar } from '../components/ui'
+import { Button, Card, Avatar, ConfirmDialog } from '../components/ui'
 import {
   getBooks,
   addBook,
@@ -59,6 +59,21 @@ export function AdminPage() {
   const [showReaderSelectModal, setShowReaderSelectModal] = useState(false)
   const [pendingAudioFile, setPendingAudioFile] = useState<File | null>(null)
   const [isUploadingAudio, setIsUploadingAudio] = useState(false)
+
+  // Confirmation dialog state
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean
+    title: string
+    message: string
+    onConfirm: () => void
+    confirmText?: string
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+  })
+
   const fileInputRef = useRef<HTMLInputElement>(null)
   const editFileInputRef = useRef<HTMLInputElement>(null)
   const tocFileInputRef = useRef<HTMLInputElement>(null)
@@ -363,23 +378,37 @@ export function AdminPage() {
   }
 
   const handleDeleteBook = (bookId: string) => {
-    if (confirm('Weet je zeker dat je dit boek wilt verwijderen? Alle hoofdstukken en opnames worden ook verwijderd.')) {
-      deleteBook(bookId)
-      setBooks(getBooks())
-      if (selectedBook?.id === bookId) {
-        setSelectedBook(null)
-        setChapters([])
-      }
-    }
+    const book = books.find(b => b.id === bookId)
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Boek verwijderen?',
+      message: `Weet je zeker dat je "${book?.title || 'dit boek'}" wilt verwijderen? Alle hoofdstukken en opnames worden ook permanent verwijderd.`,
+      confirmText: 'Verwijderen',
+      onConfirm: () => {
+        deleteBook(bookId)
+        setBooks(getBooks())
+        if (selectedBook?.id === bookId) {
+          setSelectedBook(null)
+          setChapters([])
+        }
+      },
+    })
   }
 
   const handleDeleteChapter = (chapterId: string) => {
-    if (confirm('Weet je zeker dat je dit hoofdstuk wilt verwijderen?')) {
-      deleteChapter(chapterId)
-      if (selectedBook) {
-        setChapters(getChaptersForBook(selectedBook.id))
-      }
-    }
+    const chapter = chapters.find(c => c.id === chapterId)
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Hoofdstuk verwijderen?',
+      message: `Weet je zeker dat je "${chapter?.title || 'dit hoofdstuk'}" wilt verwijderen? Eventuele opnames worden ook verwijderd.`,
+      confirmText: 'Verwijderen',
+      onConfirm: () => {
+        deleteChapter(chapterId)
+        if (selectedBook) {
+          setChapters(getChaptersForBook(selectedBook.id))
+        }
+      },
+    })
   }
 
   const handleEditChapter = (chapter: Chapter) => {
@@ -430,12 +459,18 @@ export function AdminPage() {
     })
   }
 
-  const handleDeleteRecording = (recordingId: string) => {
-    if (confirm('Weet je zeker dat je deze opname wilt verwijderen?')) {
-      deleteRecording(recordingId)
-      // Force re-render by toggling expand state
-      setExpandedChapters(prev => new Set(prev))
-    }
+  const handleDeleteRecording = (recordingId: string, readerName?: string) => {
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Opname verwijderen?',
+      message: `Weet je zeker dat je de opname${readerName ? ` van ${readerName}` : ''} wilt verwijderen? Dit kan niet ongedaan worden gemaakt.`,
+      confirmText: 'Verwijderen',
+      onConfirm: () => {
+        deleteRecording(recordingId)
+        // Force re-render by toggling expand state
+        setExpandedChapters(prev => new Set(prev))
+      },
+    })
   }
 
   const handleScanTableOfContents = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -603,10 +638,16 @@ export function AdminPage() {
       alert('Je kunt geen beheerder verwijderen.')
       return
     }
-    if (confirm('Weet je zeker dat je deze voorlezer wilt verwijderen?')) {
-      deleteUser(userId)
-      setUsers(getUsers())
-    }
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Voorlezer verwijderen?',
+      message: `Weet je zeker dat je "${user?.name || 'deze voorlezer'}" wilt verwijderen?`,
+      confirmText: 'Verwijderen',
+      onConfirm: () => {
+        deleteUser(userId)
+        setUsers(getUsers())
+      },
+    })
   }
 
   return (
@@ -998,7 +1039,7 @@ export function AdminPage() {
                                         </p>
                                       </div>
                                       <button
-                                        onClick={() => handleDeleteRecording(recording.id)}
+                                        onClick={() => handleDeleteRecording(recording.id, reader?.name)}
                                         className="p-2 text-cocoa-light hover:text-sunset transition-colors"
                                         title="Opname verwijderen"
                                       >
@@ -1508,6 +1549,17 @@ export function AdminPage() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        onClose={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+        onConfirm={confirmDialog.onConfirm}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        confirmText={confirmDialog.confirmText}
+        variant="danger"
+      />
     </div>
   )
 }

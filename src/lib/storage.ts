@@ -473,13 +473,56 @@ export function updateChapter(id: string, updates: Partial<Chapter>): Chapter | 
   return chapters[index]
 }
 
+export async function deleteChapterAsync(id: string): Promise<void> {
+  // Delete from localStorage first
+  const chapters = loadFromStorage<Chapter[]>(STORAGE_KEYS.chapters, []).filter(c => c.id !== id)
+  saveToStorage(STORAGE_KEYS.chapters, chapters)
+
+  // Also delete any recordings for this chapter from localStorage
+  const recordings = loadFromStorage<Recording[]>(STORAGE_KEYS.recordings, []).filter(r => r.chapter_id !== id)
+  saveToStorage(STORAGE_KEYS.recordings, recordings)
+
+  if (isSupabaseConfigured && supabase) {
+    // Delete recordings first, then chapter - await both for consistency
+    const { error: recError } = await supabase.from('recordings').delete().eq('chapter_id', id)
+    if (recError) console.error('Error deleting recordings for chapter from Supabase:', recError)
+
+    const { error: chapError } = await supabase.from('chapters').delete().eq('id', id)
+    if (chapError) {
+      console.error('Error syncing chapter deletion to Supabase:', chapError)
+      // Queue for retry later
+      addPendingOperation({
+        table: 'chapters',
+        operation: 'delete',
+        data: { id },
+      })
+    }
+  }
+}
+
 export function deleteChapter(id: string): void {
   const chapters = loadFromStorage<Chapter[]>(STORAGE_KEYS.chapters, []).filter(c => c.id !== id)
   saveToStorage(STORAGE_KEYS.chapters, chapters)
 
+  // Also delete any recordings for this chapter
+  const recordings = loadFromStorage<Recording[]>(STORAGE_KEYS.recordings, []).filter(r => r.chapter_id !== id)
+  saveToStorage(STORAGE_KEYS.recordings, recordings)
+
   if (isSupabaseConfigured && supabase) {
+    // Delete recordings first, then chapter
+    supabase.from('recordings').delete().eq('chapter_id', id).then(({ error }) => {
+      if (error) console.error('Error deleting recordings for chapter from Supabase:', error)
+    })
     supabase.from('chapters').delete().eq('id', id).then(({ error }) => {
-      if (error) console.error('Error syncing chapter deletion to Supabase:', error)
+      if (error) {
+        console.error('Error syncing chapter deletion to Supabase:', error)
+        // Queue for retry later
+        addPendingOperation({
+          table: 'chapters',
+          operation: 'delete',
+          data: { id },
+        })
+      }
     })
   }
 }
@@ -630,6 +673,29 @@ export function addRecording(chapterId: string, readerId: string, audioUrl: stri
   return newRecording
 }
 
+export async function deleteRecordingAsync(id: string): Promise<void> {
+  const recordings = loadFromStorage<Recording[]>(STORAGE_KEYS.recordings, []).filter(r => r.id !== id)
+  saveToStorage(STORAGE_KEYS.recordings, recordings)
+
+  if (isSupabaseConfigured && supabase) {
+    // Delete from storage
+    const { error: storageError } = await supabase.storage.from('audio').remove([`${id}.webm`])
+    if (storageError) console.error('Error deleting audio from storage:', storageError)
+
+    // Delete from database
+    const { error: dbError } = await supabase.from('recordings').delete().eq('id', id)
+    if (dbError) {
+      console.error('Error syncing recording deletion to Supabase:', dbError)
+      // Queue for retry later
+      addPendingOperation({
+        table: 'recordings',
+        operation: 'delete',
+        data: { id },
+      })
+    }
+  }
+}
+
 export function deleteRecording(id: string): void {
   const recordings = loadFromStorage<Recording[]>(STORAGE_KEYS.recordings, []).filter(r => r.id !== id)
   saveToStorage(STORAGE_KEYS.recordings, recordings)
@@ -641,7 +707,15 @@ export function deleteRecording(id: string): void {
     })
     // Delete from database
     supabase.from('recordings').delete().eq('id', id).then(({ error }) => {
-      if (error) console.error('Error syncing recording deletion to Supabase:', error)
+      if (error) {
+        console.error('Error syncing recording deletion to Supabase:', error)
+        // Queue for retry later
+        addPendingOperation({
+          table: 'recordings',
+          operation: 'delete',
+          data: { id },
+        })
+      }
     })
   }
 }
@@ -1004,6 +1078,7 @@ export async function syncToSupabase(): Promise<void> {
 }
 
 // Sync from Supabase to local (call this on app start)
+// IMPORTANT: Supabase is the source of truth - local data that doesn't exist in Supabase should be removed
 export async function syncFromSupabase(): Promise<void> {
   if (!isSupabaseConfigured || !supabase) return
 
@@ -1015,55 +1090,70 @@ export async function syncFromSupabase(): Promise<void> {
     console.log(`Processed pending operations: ${success} succeeded, ${failed} failed`)
   }
 
-  // Fetch and merge books
+  // Fetch books from Supabase - Supabase is source of truth
   const { data: remoteBooks } = await supabase.from('books').select('*')
   if (remoteBooks) {
-    const localBooks = loadFromStorage<Book[]>(STORAGE_KEYS.books, [])
-    const merged = mergeArrays(localBooks, remoteBooks, 'id')
-    saveToStorage(STORAGE_KEYS.books, merged)
+    // Use Supabase data directly (source of truth)
+    saveToStorage(STORAGE_KEYS.books, remoteBooks)
   }
 
-  // Fetch and merge chapters
+  // Fetch chapters from Supabase - Supabase is source of truth
   const { data: remoteChapters } = await supabase.from('chapters').select('*')
   if (remoteChapters) {
-    const localChapters = loadFromStorage<Chapter[]>(STORAGE_KEYS.chapters, [])
-    const merged = mergeArrays(localChapters, remoteChapters, 'id')
-    saveToStorage(STORAGE_KEYS.chapters, merged)
+    // Use Supabase data directly (source of truth)
+    saveToStorage(STORAGE_KEYS.chapters, remoteChapters)
   }
 
-  // Fetch and merge recordings
+  // Fetch recordings from Supabase - Supabase is source of truth
   const { data: remoteRecordings } = await supabase.from('recordings').select('*')
   if (remoteRecordings) {
-    const localRecordings = loadFromStorage<Recording[]>(STORAGE_KEYS.recordings, [])
-    const merged = mergeArrays(localRecordings, remoteRecordings, 'id')
-    saveToStorage(STORAGE_KEYS.recordings, merged)
+    // Use Supabase data directly (source of truth)
+    saveToStorage(STORAGE_KEYS.recordings, remoteRecordings)
   }
 
-  // Fetch and merge users
+  // Fetch users from Supabase
   const { data: remoteUsers } = await supabase.from('users').select('*')
   if (remoteUsers && remoteUsers.length > 0) {
     saveToStorage(STORAGE_KEYS.users, remoteUsers)
   }
 
+  // Clean up any orphaned data after sync
+  const { removedRecordings, removedChapters } = cleanupOrphanedData()
+  if (removedRecordings > 0 || removedChapters > 0) {
+    console.log(`Cleaned up orphaned data: ${removedChapters} chapters, ${removedRecordings} recordings`)
+  }
+
   console.log('Sync from Supabase complete!')
 }
 
-// Helper to merge two arrays by a key, preferring items with later created_at
-function mergeArrays<T extends { id: string; created_at?: string }>(local: T[], remote: T[], key: keyof T): T[] {
-  const map = new Map<string, T>()
+// Clean up orphaned data (recordings without chapters, chapters without books)
+export function cleanupOrphanedData(): { removedRecordings: number; removedChapters: number } {
+  const books = loadFromStorage<Book[]>(STORAGE_KEYS.books, [])
+  const chapters = loadFromStorage<Chapter[]>(STORAGE_KEYS.chapters, [])
+  const recordings = loadFromStorage<Recording[]>(STORAGE_KEYS.recordings, [])
 
-  for (const item of local) {
-    map.set(item[key] as string, item)
+  const bookIds = new Set(books.map(b => b.id))
+
+  // Remove chapters that reference non-existent books
+  const validChapters = chapters.filter(c => bookIds.has(c.book_id))
+  const removedChapters = chapters.length - validChapters.length
+
+  // Update chapterIds after filtering
+  const validChapterIds = new Set(validChapters.map(c => c.id))
+
+  // Remove recordings that reference non-existent chapters
+  const validRecordings = recordings.filter(r => validChapterIds.has(r.chapter_id))
+  const removedRecordings = recordings.length - validRecordings.length
+
+  if (removedChapters > 0) {
+    saveToStorage(STORAGE_KEYS.chapters, validChapters)
+    console.log(`Cleaned up ${removedChapters} orphaned chapters`)
   }
 
-  for (const item of remote) {
-    const existing = map.get(item[key] as string)
-    if (!existing) {
-      map.set(item[key] as string, item)
-    } else if (item.created_at && existing.created_at && item.created_at > existing.created_at) {
-      map.set(item[key] as string, item)
-    }
+  if (removedRecordings > 0) {
+    saveToStorage(STORAGE_KEYS.recordings, validRecordings)
+    console.log(`Cleaned up ${removedRecordings} orphaned recordings`)
   }
 
-  return Array.from(map.values())
+  return { removedRecordings, removedChapters }
 }
