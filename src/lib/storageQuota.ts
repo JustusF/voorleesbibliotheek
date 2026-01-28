@@ -149,33 +149,32 @@ export function getStorageWarningMessage(): string | null {
   const { percentage, criticalLevel, nearLimit } = getStorageUsage()
 
   if (criticalLevel) {
-    return `Opslag bijna vol (${Math.round(percentage * 100)}%). Oude opnames worden automatisch verwijderd.`
+    return `Opslag bijna vol (${Math.round(percentage * 100)}%). Nieuwe opnames worden geblokkeerd totdat je oude opnames verwijdert.`
   }
 
   if (nearLimit) {
-    return `Opslag loopt vol (${Math.round(percentage * 100)}%). Overweeg oude opnames te verwijderen.`
+    return `Opslag loopt vol (${Math.round(percentage * 100)}%). Verwijder oude opnames om ruimte te maken.`
   }
 
   return null
 }
 
 /**
- * Monitor storage and auto-cleanup if needed
+ * Check if there's enough storage space for new recording
  * Call this before adding new recordings
+ * Returns false if storage is too full - NO auto-cleanup to prevent data loss
  */
 export function ensureStorageSpace(requiredBytes: number = 1024 * 1024): boolean {
-  const { available, criticalLevel } = getStorageUsage()
+  const { available } = getStorageUsage()
 
-  // If critical and not enough space, auto-cleanup
-  if (criticalLevel && available < requiredBytes) {
-    console.warn('Storage critical - auto-cleaning old recordings')
-    const removed = cleanupOldRecordings(2) // Free 2MB
-    console.log(`Removed ${removed} old recordings`)
-
-    // Check again
-    const { available: newAvailable } = getStorageUsage()
-    return newAvailable >= requiredBytes
-  }
-
+  // Simply check if we have enough space
+  // If not, user must manually cleanup - we don't delete their data automatically
   return available >= requiredBytes
+}
+
+/**
+ * Get user-friendly error message when storage is full
+ */
+export function getStorageFullMessage(): string {
+  return 'Opslag vol. Verwijder oude opnames om nieuwe toe te voegen.'
 }

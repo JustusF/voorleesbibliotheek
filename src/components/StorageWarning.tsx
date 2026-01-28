@@ -22,14 +22,6 @@ export function StorageWarning() {
     return () => clearInterval(interval)
   }, [])
 
-  const handleCleanup = () => {
-    const removed = cleanupOldRecordings(3) // Free 3MB
-    alert(`${removed} oude opnames verwijderd om ruimte te maken.`)
-    setShow(false)
-    // Recheck after cleanup
-    const newUsage = getStorageUsage()
-    setUsage(newUsage)
-  }
 
   if (!show) return null
 
@@ -67,24 +59,23 @@ export function StorageWarning() {
               ({Math.round(usage.percentage * 100)}%)
             </p>
             {usage.criticalLevel && (
-              <p className="text-sm text-red-600 mt-2">
-                Nieuwe opnames kunnen mislukken. Verwijder oude opnames om ruimte te maken.
+              <p className="text-sm text-red-600 mt-2 font-medium">
+                ⚠️ Nieuwe opnames worden geblokkeerd. Ga naar Admin → verwijder oude opnames.
+              </p>
+            )}
+            {!usage.criticalLevel && usage.nearLimit && (
+              <p className="text-sm text-yellow-700 mt-2">
+                Verwijder oude opnames via de Admin pagina om ruimte te maken.
               </p>
             )}
 
             <div className="flex gap-2 mt-3">
               <button
-                onClick={handleCleanup}
+                onClick={() => setShow(false)}
                 className="px-3 py-1.5 bg-white rounded-lg text-sm font-medium hover:bg-opacity-80 transition-colors"
                 style={{ color: usage.criticalLevel ? '#DC2626' : '#D97706' }}
               >
-                Oude opnames verwijderen
-              </button>
-              <button
-                onClick={() => setShow(false)}
-                className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800"
-              >
-                Sluiten
+                Begrepen
               </button>
             </div>
           </div>
