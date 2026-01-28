@@ -33,8 +33,11 @@ export function FileUpload({ onFileSelect, accept = 'audio/*', isUploading = fal
     const file = e.dataTransfer.files[0]
     if (!file) return
 
-    // Basic validation
-    if (!file.type.startsWith('audio/')) {
+    // Basic validation - check MIME type OR file extension
+    const hasAudioMimeType = file.type.startsWith('audio/')
+    const hasAudioExtension = /\.(mp3|wav|m4a|ogg|webm)$/i.test(file.name)
+
+    if (!hasAudioMimeType && !hasAudioExtension) {
       setValidationError('Dit bestandstype wordt niet ondersteund.')
       return
     }
@@ -48,8 +51,11 @@ export function FileUpload({ onFileSelect, accept = 'audio/*', isUploading = fal
     const file = e.target.files?.[0]
     if (!file) return
 
-    // Basic validation
-    if (!file.type.startsWith('audio/')) {
+    // Basic validation - check MIME type OR file extension (iOS voice memos may have empty MIME type)
+    const hasAudioMimeType = file.type.startsWith('audio/')
+    const hasAudioExtension = /\.(mp3|wav|m4a|ogg|webm)$/i.test(file.name)
+
+    if (!hasAudioMimeType && !hasAudioExtension) {
       setValidationError('Dit bestandstype wordt niet ondersteund.')
       return
     }
