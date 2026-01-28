@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { HomePage, ListenPage, ReadPage, AdminPage } from './pages'
 import { AppProvider, useSyncStatus } from './context/AppContext'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { StorageWarning } from './components/StorageWarning'
 
 type SyncStatus = 'idle' | 'syncing' | 'success' | 'error' | 'offline'
 
@@ -89,6 +90,7 @@ function App() {
     <ErrorBoundary>
       <AppProvider>
         <BrowserRouter>
+          <StorageWarning />
           <AppContent />
         </BrowserRouter>
       </AppProvider>
