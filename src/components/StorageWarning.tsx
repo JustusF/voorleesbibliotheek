@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { getStorageUsage, formatBytes, cleanupOldRecordings } from '../lib/storageQuota'
+import { getStorageUsage, formatBytes } from '../lib/storageQuota'
 
 export function StorageWarning() {
   const [show, setShow] = useState(false)
