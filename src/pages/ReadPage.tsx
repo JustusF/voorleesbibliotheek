@@ -5,6 +5,7 @@ import { Button, CloudDecoration, Avatar, Card, ConfirmDialog } from '../compone
 import { AudioRecorder } from '../components/AudioRecorder'
 import { FileUpload } from '../components/FileUpload'
 import { getBooks, getBook, getUsers, addRecording, addBook, getOrCreateNextChapter, getChaptersForBook, getRecordingsForChapter, updateChapter, getRecordingsForReader, getChapter } from '../lib/storage'
+import { uploadAudioFile } from '../lib/audioUpload'
 import type { Book, Chapter, User, Recording } from '../types'
 
 type Step = 'reader' | 'book' | 'chapter' | 'record' | 'success'
@@ -35,6 +36,12 @@ export function ReadPage() {
   // Reader dashboard state
   const [showDashboard, setShowDashboard] = useState(false)
   const [readerRecordings, setReaderRecordings] = useState<Recording[]>([])
+
+  // Upload state
+  const [uploadState, setUploadState] = useState<{
+    isUploading: boolean
+    error: string | null
+  }>({ isUploading: false, error: null })
 
   useEffect(() => {
     setBooks(getBooks())
@@ -145,17 +152,43 @@ export function ReadPage() {
   const handleFileUpload = async (file: File) => {
     if (!currentChapter || !selectedReader) return
 
-    // Convert file to base64 data URL for localStorage storage
-    const reader = new FileReader()
-    reader.onloadend = () => {
-      const audioUrl = reader.result as string
-      // Estimate duration (will be updated when played)
-      addRecording(currentChapter.id, selectedReader.id, audioUrl, 0)
-      // Refresh reader's recordings for dashboard
+    // Reset upload state
+    setUploadState({ isUploading: true, error: null })
+
+    try {
+      // Use shared upload utility with validation and duration detection
+      const result = await uploadAudioFile(
+        file,
+        currentChapter.id,
+        selectedReader.id,
+        {
+          maxSizeBytes: 50 * 1024 * 1024, // 50MB
+        }
+      )
+
+      if (!result.success) {
+        // Handle validation/upload errors
+        setUploadState({
+          isUploading: false,
+          error: result.message
+        })
+        return
+      }
+
+      // Success - refresh recordings and proceed
       setReaderRecordings(getRecordingsForReader(selectedReader.id))
-      setStep('success')
+      setUploadState({ isUploading: false, error: null })
+
+      // Brief delay before showing success to let user see the uploaded file
+      setTimeout(() => setStep('success'), 500)
+
+    } catch (error) {
+      console.error('Unexpected upload error:', error)
+      setUploadState({
+        isUploading: false,
+        error: 'Er ging iets mis bij het uploaden. Probeer het opnieuw.'
+      })
     }
-    reader.readAsDataURL(file)
   }
 
   const handleBack = () => {
@@ -677,7 +710,11 @@ export function ReadPage() {
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
           >
-            <FileUpload onFileSelect={handleFileUpload} />
+            <FileUpload
+              onFileSelect={handleFileUpload}
+              isUploading={uploadState.isUploading}
+              uploadError={uploadState.error}
+            />
           </motion.div>
         )}
 
