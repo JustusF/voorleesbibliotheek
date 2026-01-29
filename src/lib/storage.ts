@@ -564,6 +564,29 @@ export function getRecordingsForChapter(chapterId: string): Recording[] {
   return loadFromStorage<Recording[]>(STORAGE_KEYS.recordings, []).filter(r => r.chapter_id === chapterId)
 }
 
+/**
+ * Replace an existing recording for a chapter+reader combination, or add new if none exists
+ * This prevents duplicate recordings from the same reader for the same chapter
+ */
+export async function replaceRecordingAsync(
+  chapterId: string,
+  readerId: string,
+  audioData: string | Blob,
+  durationSeconds: number
+): Promise<Recording> {
+  // 1. Find existing recording for this chapter + reader combination
+  const existingRecording = getRecordingsForChapter(chapterId)
+    .find(r => r.reader_id === readerId)
+
+  // 2. Delete old recording if it exists
+  if (existingRecording) {
+    await deleteRecording(existingRecording.id)
+  }
+
+  // 3. Add new recording
+  return await addRecordingAsync(chapterId, readerId, audioData, durationSeconds)
+}
+
 export function getRecordingsForReader(readerId: string): Recording[] {
   return loadFromStorage<Recording[]>(STORAGE_KEYS.recordings, []).filter(r => r.reader_id === readerId)
 }

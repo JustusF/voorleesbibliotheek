@@ -21,7 +21,7 @@ import {
   getRecordings,
   getRecordingsForChapter,
   deleteRecording,
-  addRecordingAsync,
+  replaceRecordingAsync,
   forceResyncFromSupabase,
 } from '../lib/storage'
 import { extractChaptersFromImages } from '../lib/ocr'
@@ -665,8 +665,8 @@ export function AdminPage() {
         audio.src = URL.createObjectURL(pendingAudioFile)
       })
 
-      // Upload the recording
-      await addRecordingAsync(uploadingChapterId, readerId, pendingAudioFile, duration)
+      // Replace existing recording or add new one (prevents duplicates)
+      await replaceRecordingAsync(uploadingChapterId, readerId, pendingAudioFile, duration)
 
       // Force re-render
       setExpandedChapters(prev => new Set(prev))

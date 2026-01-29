@@ -1,4 +1,4 @@
-import { addRecordingAsync } from './storage'
+import { replaceRecordingAsync } from './storage'
 
 // Error types for user-friendly messages
 export type AudioUploadErrorType =
@@ -156,9 +156,9 @@ export async function uploadAudioFile(
       }
     }
 
-    // Step 3: Upload using existing storage function
+    // Step 3: Replace existing or add new recording (prevents duplicates)
     try {
-      const recording = await addRecordingAsync(
+      const recording = await replaceRecordingAsync(
         chapterId,
         readerId,
         file, // Pass the File directly (it's a Blob)
