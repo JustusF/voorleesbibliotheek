@@ -629,8 +629,11 @@ export function AdminPage() {
     const file = e.target.files?.[0]
     if (!file || !uploadingChapterId) return
 
-    // Check if it's an audio file
-    if (!file.type.startsWith('audio/')) {
+    // Check if it's an audio file - check MIME type OR file extension (iOS voice memos may have empty MIME type)
+    const hasAudioMimeType = file.type.startsWith('audio/')
+    const hasAudioExtension = /\.(mp3|wav|m4a|ogg|webm)$/i.test(file.name)
+
+    if (!hasAudioMimeType && !hasAudioExtension) {
       alert('Selecteer een audiobestand (mp3, wav, m4a, etc.)')
       return
     }
@@ -1906,7 +1909,7 @@ export function AdminPage() {
       <input
         ref={audioFileInputRef}
         type="file"
-        accept="audio/*"
+        accept="audio/*,.m4a,.mp3,.wav,.ogg,.webm"
         onChange={handleAudioFileChange}
         className="hidden"
       />

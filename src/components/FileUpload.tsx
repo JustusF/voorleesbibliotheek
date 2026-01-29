@@ -4,12 +4,11 @@ import { Button } from './ui'
 
 interface FileUploadProps {
   onFileSelect: (file: File) => void | Promise<void>
-  accept?: string
   isUploading?: boolean
   uploadError?: string | null
 }
 
-export function FileUpload({ onFileSelect, accept = 'audio/*', isUploading = false, uploadError = null }: FileUploadProps) {
+export function FileUpload({ onFileSelect, isUploading = false, uploadError = null }: FileUploadProps) {
   const [isDragging, setIsDragging] = useState(false)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [validationError, setValidationError] = useState<string | null>(null)
@@ -82,7 +81,7 @@ export function FileUpload({ onFileSelect, accept = 'audio/*', isUploading = fal
       <input
         ref={inputRef}
         type="file"
-        accept={accept}
+        accept="audio/*,.m4a,.mp3,.wav,.ogg,.webm"
         onChange={handleFileChange}
         className="hidden"
         disabled={isUploading}
