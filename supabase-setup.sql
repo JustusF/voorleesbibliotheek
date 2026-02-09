@@ -136,6 +136,37 @@ CREATE TRIGGER update_books_updated_at BEFORE UPDATE ON books
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- ============================================
+-- RECORDING LOCKS (prevents concurrent recording of same chapter)
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS recording_locks (
+  chapter_id UUID NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+  reader_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reader_name TEXT NOT NULL,
+  locked_at TIMESTAMPTZ DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (chapter_id, reader_id)
+);
+
+-- Enable RLS for locks
+ALTER TABLE recording_locks ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all access to recording_locks" ON recording_locks FOR ALL USING (true) WITH CHECK (true);
+
+-- Enable realtime for locks
+ALTER PUBLICATION supabase_realtime ADD TABLE recording_locks;
+
+-- Index for efficient expired lock cleanup
+CREATE INDEX IF NOT EXISTS idx_recording_locks_expires_at ON recording_locks(expires_at);
+
+-- Function to cleanup expired locks (can be called periodically)
+CREATE OR REPLACE FUNCTION cleanup_expired_locks()
+RETURNS void AS $$
+BEGIN
+  DELETE FROM recording_locks WHERE expires_at < NOW();
+END;
+$$ LANGUAGE plpgsql;
+
+-- ============================================
 -- MIGRATION HELPER (run if table already exists without author column)
 -- ============================================
 -- ALTER TABLE books ADD COLUMN IF NOT EXISTS author TEXT;

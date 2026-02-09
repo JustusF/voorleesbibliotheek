@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from './ui'
 
 interface AudioRecorderProps {
@@ -23,6 +23,7 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
   const analyserRef = useRef<AnalyserNode | null>(null)
   const animationRef = useRef<number | null>(null)
   const [audioLevels, setAudioLevels] = useState<number[]>(Array(20).fill(0))
+  const [showRecordingFlash, setShowRecordingFlash] = useState(false)
 
   // Check if microphone is available
   useEffect(() => {
@@ -109,6 +110,13 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
       mediaRecorder.start()
       setState('recording')
       setDuration(0)
+
+      // Haptic + visual feedback on mobile when recording starts
+      if (navigator.vibrate) {
+        navigator.vibrate([50, 30, 50])
+      }
+      setShowRecordingFlash(true)
+      setTimeout(() => setShowRecordingFlash(false), 600)
 
       timerRef.current = setInterval(() => {
         setDuration(d => d + 1)
@@ -223,7 +231,19 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
   }
 
   return (
-    <div className="bg-white rounded-[32px] shadow-lifted p-8 max-w-md w-full mx-auto">
+    <div className="bg-white rounded-[32px] shadow-lifted p-8 max-w-md w-full mx-auto relative overflow-hidden">
+      {/* Recording start flash */}
+      <AnimatePresence>
+        {showRecordingFlash && (
+          <motion.div
+            initial={{ opacity: 0.6, scale: 0.8 }}
+            animate={{ opacity: 0, scale: 1.5 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.6 }}
+            className="absolute inset-0 bg-sunset/20 rounded-[32px] pointer-events-none z-10"
+          />
+        )}
+      </AnimatePresence>
       {audioUrl && <audio ref={audioRef} src={audioUrl} onEnded={() => setState('recorded')} />}
 
       <div className="text-center mb-8">

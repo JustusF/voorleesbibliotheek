@@ -4,8 +4,10 @@ import { useNavigate } from 'react-router-dom'
 import { Button, CloudDecoration, Avatar, Card, ConfirmDialog } from '../components/ui'
 import { AudioRecorder } from '../components/AudioRecorder'
 import { FileUpload } from '../components/FileUpload'
-import { getBooks, getBook, getUsers, addRecording, addBook, getOrCreateNextChapter, getChaptersForBook, getRecordingsForChapter, updateChapter, getRecordingsForReader, getChapter } from '../lib/storage'
+import { getBooks, getBook, getUsers, addRecordingAsync, addBook, getOrCreateNextChapter, getChaptersForBook, getRecordingsForChapter, updateChapter, getRecordingsForReader, getChapter } from '../lib/storage'
 import { uploadAudioFile } from '../lib/audioUpload'
+import { checkAvailableStorage, type StorageCheckResult } from '../lib/storageSpaceCheck'
+import { checkChapterLock, acquireLock, releaseLock, type LockCheckResult } from '../lib/recordingLock'
 import type { Book, Chapter, User, Recording } from '../types'
 
 type Step = 'reader' | 'book' | 'chapter' | 'record' | 'success'
@@ -37,11 +39,22 @@ export function ReadPage() {
   const [showDashboard, setShowDashboard] = useState(false)
   const [readerRecordings, setReaderRecordings] = useState<Recording[]>([])
 
+  // Save error state
+  const [saveError, setSaveError] = useState<string | null>(null)
+
   // Upload state
   const [uploadState, setUploadState] = useState<{
     isUploading: boolean
     error: string | null
   }>({ isUploading: false, error: null })
+
+  // Storage check state
+  const [storageCheck, setStorageCheck] = useState<StorageCheckResult | null>(null)
+  const [isCheckingStorage, setIsCheckingStorage] = useState(false)
+
+  // Lock check state
+  const [lockWarning, setLockWarning] = useState<LockCheckResult | null>(null)
+  const [showLockWarning, setShowLockWarning] = useState(false)
 
   useEffect(() => {
     setBooks(getBooks())
@@ -63,7 +76,17 @@ export function ReadPage() {
     setStep('chapter')
   }
 
-  const handleChapterSelect = (chapter: Chapter) => {
+  const handleChapterSelect = async (chapter: Chapter) => {
+    if (!selectedReader) return
+
+    // First check if someone else is recording this chapter
+    const lockStatus = await checkChapterLock(chapter.id, selectedReader.id)
+    if (lockStatus.isLocked) {
+      setLockWarning(lockStatus)
+      setShowLockWarning(true)
+      return
+    }
+
     // Check if chapter already has recordings
     const existingRecordings = getRecordingsForChapter(chapter.id)
     if (existingRecordings.length > 0) {
@@ -71,19 +94,52 @@ export function ReadPage() {
       setPendingChapter(chapter)
       setShowOverwriteConfirm(true)
     } else {
-      // No existing recordings, proceed directly
+      // No existing recordings, check storage and proceed
       setCurrentChapter(chapter)
-      setStep('record')
+      await checkStorageAndProceed()
     }
   }
 
-  const handleConfirmOverwrite = () => {
+  const handleConfirmOverwrite = async () => {
     if (pendingChapter) {
       setCurrentChapter(pendingChapter)
       setPendingChapter(null)
-      setStep('record')
+      // Check storage before going to record step
+      await checkStorageAndProceed()
     }
     setShowOverwriteConfirm(false)
+  }
+
+  // Check storage space before allowing recording
+  const checkStorageAndProceed = async () => {
+    setIsCheckingStorage(true)
+    try {
+      const result = await checkAvailableStorage()
+      setStorageCheck(result)
+      if (result.canRecord) {
+        setStep('record')
+      }
+      // If can't record, the UI will show the warning
+    } finally {
+      setIsCheckingStorage(false)
+    }
+  }
+
+  // Acquire lock when starting actual recording
+  const handleStartRecording = async (mode: 'record' | 'upload') => {
+    if (!currentChapter || !selectedReader) return
+
+    // Acquire lock before starting
+    await acquireLock(currentChapter.id, selectedReader.id, selectedReader.name)
+    setRecordMode(mode)
+  }
+
+  // Release lock when canceling
+  const handleCancelRecording = async () => {
+    if (currentChapter && selectedReader) {
+      await releaseLock(currentChapter.id, selectedReader.id)
+    }
+    setRecordMode(null)
   }
 
   const handleCancelOverwrite = () => {
@@ -113,12 +169,13 @@ export function ReadPage() {
     setEditChapterTitle('')
   }
 
-  const handleNewChapter = () => {
+  const handleNewChapter = async () => {
     if (!selectedBook) return
     const chapter = getOrCreateNextChapter(selectedBook.id)
     setCurrentChapter(chapter)
     setBookChapters(getChaptersForBook(selectedBook.id))
-    setStep('record')
+    // Check storage before going to record step
+    await checkStorageAndProceed()
   }
 
   const handleCreateBook = () => {
@@ -137,16 +194,22 @@ export function ReadPage() {
   const handleRecordingComplete = async (blob: Blob, duration: number) => {
     if (!currentChapter || !selectedReader) return
 
-    // Convert blob to base64 data URL for localStorage storage
-    const reader = new FileReader()
-    reader.onloadend = () => {
-      const audioUrl = reader.result as string
-      addRecording(currentChapter.id, selectedReader.id, audioUrl, duration)
+    try {
+      // Directly upload the blob to storage backend (R2 or Supabase)
+      // This is much more efficient than converting to base64 first,
+      // especially for large recordings (9+ minutes)
+      await addRecordingAsync(currentChapter.id, selectedReader.id, blob, duration)
+
       // Refresh reader's recordings for dashboard
       setReaderRecordings(getRecordingsForReader(selectedReader.id))
+      // Release the lock after successful save
+      await releaseLock(currentChapter.id, selectedReader.id)
+      setSaveError(null)
       setStep('success')
+    } catch (error) {
+      console.error('Fout bij opslaan opname:', error)
+      setSaveError('Er ging iets mis bij het opslaan van je opname. Probeer het opnieuw.')
     }
-    reader.readAsDataURL(blob)
   }
 
   const handleFileUpload = async (file: File) => {
@@ -178,6 +241,8 @@ export function ReadPage() {
       // Success - refresh recordings and proceed
       setReaderRecordings(getRecordingsForReader(selectedReader.id))
       setUploadState({ isUploading: false, error: null })
+      // Release the lock after successful upload
+      await releaseLock(currentChapter.id, selectedReader.id)
 
       // Brief delay before showing success to let user see the uploaded file
       setTimeout(() => setStep('success'), 500)
@@ -318,7 +383,7 @@ export function ReadPage() {
           >
             <p className="text-center text-cocoa-light text-lg mb-8">Kies je naam zodat de kinderen weten wie voorleest</p>
             <div className="grid grid-cols-2 gap-4 md:gap-6">
-              {users.map((user) => (
+              {users.filter(u => u.role === 'reader' || u.role === 'admin').map((user) => (
                 <motion.button
                   key={user.id}
                   whileHover={{ scale: 1.02 }}
@@ -549,11 +614,30 @@ export function ReadPage() {
               {/* Existing chapters */}
               {bookChapters.length > 0 && (
                 <div className="pt-2">
-                  <p className="text-cocoa-light text-base mb-4 px-1">Of voeg audio toe aan een bestaand hoofdstuk:</p>
-                  {bookChapters.map((chapter) => {
+                  {/* Chapter count summary */}
+                  {(() => {
+                    const sortedChapters = [...bookChapters].sort((a, b) => a.chapter_number - b.chapter_number)
+                    const recordedCount = sortedChapters.filter(ch => getRecordingsForChapter(ch.id).length > 0).length
+                    return (
+                      <div className="flex items-center gap-3 mb-4 px-1">
+                        <p className="text-cocoa-light text-base flex-1">Of voeg audio toe aan een bestaand hoofdstuk:</p>
+                        <span className="text-sm text-cocoa-light bg-white/60 px-3 py-1 rounded-full">
+                          {recordedCount}/{sortedChapters.length} ingelezen
+                        </span>
+                      </div>
+                    )
+                  })()}
+                  {[...bookChapters].sort((a, b) => a.chapter_number - b.chapter_number).map((chapter) => {
                     const recordings = getRecordingsForChapter(chapter.id)
                     const hasRecording = recordings.length > 0
                     const isEditing = editingChapter?.id === chapter.id
+                    const readerNames = hasRecording
+                      ? recordings.map(r => users.find(u => u.id === r.reader_id)?.name).filter(Boolean)
+                      : []
+                    const durationSec = hasRecording ? recordings[0].duration_seconds : 0
+                    const durationText = durationSec > 0
+                      ? `${Math.floor(durationSec / 60)}:${(durationSec % 60).toString().padStart(2, '0')}`
+                      : ''
 
                     if (isEditing) {
                       return (
@@ -596,13 +680,29 @@ export function ReadPage() {
                           onClick={() => handleChapterSelect(chapter)}
                           className="flex-1 flex items-center gap-4 text-left"
                         >
-                          <div className={`w-14 h-14 rounded-[14px] flex items-center justify-center font-display text-2xl text-cocoa ${hasRecording ? 'bg-moss/20' : 'bg-sky-light'}`}>
+                          <div className={`w-14 h-14 rounded-[14px] flex items-center justify-center font-display text-2xl ${hasRecording ? 'bg-moss/20 text-moss' : 'bg-sky-light text-cocoa'}`}>
                             {hasRecording ? '✓' : chapter.chapter_number}
                           </div>
                           <div className="flex-1">
-                            <span className="font-display text-xl text-cocoa block">{chapter.title}</span>
+                            <div className="flex items-center gap-2">
+                              <span className="font-display text-xl text-cocoa">{chapter.title}</span>
+                              {!hasRecording && (
+                                <span className="text-xs text-cocoa-light bg-cream-dark px-2 py-0.5 rounded-full">
+                                  {chapter.chapter_number}
+                                </span>
+                              )}
+                            </div>
                             {hasRecording && (
-                              <span className="text-sm text-moss">Heeft al een opname</span>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                <span className="text-sm text-moss">
+                                  {readerNames.join(', ')}
+                                </span>
+                                {durationText && (
+                                  <span className="text-xs text-cocoa-light">
+                                    · {durationText}
+                                  </span>
+                                )}
+                              </div>
                             )}
                           </div>
                         </button>
@@ -658,11 +758,47 @@ export function ReadPage() {
                 </p>
               </div>
 
+              {/* Storage warning */}
+              {storageCheck && !storageCheck.canRecord && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  className="mb-6 p-4 bg-sunset/10 border-2 border-sunset/30 rounded-xl"
+                >
+                  <div className="flex items-start gap-3">
+                    <svg className="w-6 h-6 text-sunset flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                    <div>
+                      <p className="font-medium text-sunset">Onvoldoende opslagruimte</p>
+                      <p className="text-sm text-cocoa-light mt-1">{storageCheck.message}</p>
+                      <p className="text-sm text-cocoa-light mt-2">
+                        Beschikbaar: <strong>{storageCheck.availableFormatted}</strong> |
+                        Nodig: <strong>{storageCheck.requiredFormatted}</strong>
+                      </p>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+
+              {/* Loading state while checking storage */}
+              {isCheckingStorage && (
+                <div className="mb-6 flex items-center justify-center gap-3 text-cocoa-light">
+                  <motion.div
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                    className="w-5 h-5 border-2 border-honey border-t-transparent rounded-full"
+                  />
+                  <span>Opslagruimte controleren...</span>
+                </div>
+              )}
+
               <div className="space-y-4">
                 <Button
                   variant="record"
                   size="xl"
-                  onClick={() => setRecordMode('record')}
+                  onClick={() => handleStartRecording('record')}
+                  disabled={isCheckingStorage || (storageCheck !== null && !storageCheck.canRecord)}
                   className="w-full text-xl py-6"
                 >
                   <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -674,7 +810,8 @@ export function ReadPage() {
                 <Button
                   variant="secondary"
                   size="lg"
-                  onClick={() => setRecordMode('upload')}
+                  onClick={() => handleStartRecording('upload')}
+                  disabled={isCheckingStorage || (storageCheck !== null && !storageCheck.canRecord)}
                   className="w-full text-lg py-5"
                 >
                   <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -695,9 +832,29 @@ export function ReadPage() {
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
           >
+            {saveError && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="max-w-md mx-auto mb-4 p-4 bg-sunset/10 border-2 border-sunset/30 rounded-xl flex items-start gap-3"
+              >
+                <svg className="w-6 h-6 text-sunset flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <div className="flex-1">
+                  <p className="font-medium text-sunset">Opslaan mislukt</p>
+                  <p className="text-sm text-cocoa-light mt-1">{saveError}</p>
+                </div>
+                <button onClick={() => setSaveError(null)} className="text-cocoa-light hover:text-cocoa">
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </motion.div>
+            )}
             <AudioRecorder
               onRecordingComplete={handleRecordingComplete}
-              onCancel={() => setRecordMode(null)}
+              onCancel={handleCancelRecording}
             />
           </motion.div>
         )}
@@ -778,6 +935,18 @@ export function ReadPage() {
         message={`Dit hoofdstuk heeft al een opname. Als je een nieuwe opname maakt, wordt de oude opname vervangen. Weet je dit zeker?`}
         confirmText="Ja, nieuwe opname"
         cancelText="Nee, annuleren"
+        variant="default"
+      />
+
+      {/* Lock warning dialog */}
+      <ConfirmDialog
+        isOpen={showLockWarning}
+        onClose={() => setShowLockWarning(false)}
+        onConfirm={() => setShowLockWarning(false)}
+        title="Hoofdstuk wordt al opgenomen"
+        message={lockWarning?.message || 'Iemand anders is dit hoofdstuk aan het opnemen.'}
+        confirmText="Oké, begrepen"
+        cancelText=""
         variant="default"
       />
     </div>

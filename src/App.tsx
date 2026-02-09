@@ -1,9 +1,28 @@
+import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { HomePage, ListenPage, ReadPage, AdminPage } from './pages'
+import { HomePage } from './pages/HomePage'
 import { AppProvider, useSyncStatus } from './context/AppContext'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { StorageWarning } from './components/StorageWarning'
+import { ToastProvider } from './components/ui'
+
+// Lazy-load pages that aren't immediately needed
+const ListenPage = lazy(() => import('./pages/ListenPage').then(m => ({ default: m.ListenPage })))
+const ReadPage = lazy(() => import('./pages/ReadPage').then(m => ({ default: m.ReadPage })))
+const AdminPage = lazy(() => import('./pages/AdminPage').then(m => ({ default: m.AdminPage })))
+
+function PageLoader() {
+  return (
+    <div className="min-h-screen flex items-center justify-center">
+      <motion.div
+        animate={{ rotate: 360 }}
+        transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+        className="w-10 h-10 border-4 border-honey border-t-transparent rounded-full"
+      />
+    </div>
+  )
+}
 
 type SyncStatus = 'idle' | 'syncing' | 'success' | 'error' | 'offline'
 
@@ -74,12 +93,14 @@ function AppContent() {
 
   return (
     <>
-      <Routes>
-        <Route path="/" element={<HomePage />} />
-        <Route path="/luisteren" element={<ListenPage />} />
-        <Route path="/voorlezen" element={<ReadPage />} />
-        <Route path="/beheer" element={<AdminPage />} />
-      </Routes>
+      <Suspense fallback={<PageLoader />}>
+        <Routes>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/luisteren" element={<ListenPage />} />
+          <Route path="/voorlezen" element={<ReadPage />} />
+          <Route path="/beheer" element={<AdminPage />} />
+        </Routes>
+      </Suspense>
       <SyncIndicator status={syncStatus} isOnline={isOnline} />
     </>
   )
@@ -89,10 +110,12 @@ function App() {
   return (
     <ErrorBoundary>
       <AppProvider>
-        <BrowserRouter>
-          <StorageWarning />
-          <AppContent />
-        </BrowserRouter>
+        <ToastProvider>
+          <BrowserRouter>
+            <StorageWarning />
+            <AppContent />
+          </BrowserRouter>
+        </ToastProvider>
       </AppProvider>
     </ErrorBoundary>
   )

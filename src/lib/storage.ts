@@ -1,8 +1,12 @@
 import { supabase, isSupabaseConfigured as supabaseConfigured } from './supabase'
+import { getStorageBackend, isAnyStorageConfigured } from './storageBackend'
 import type { Book, Chapter, Recording, User } from '../types'
 
 // Re-export for use in App.tsx
 export const isSupabaseConfigured = supabaseConfigured
+
+// Export storage backend info for debugging/admin
+export { isAnyStorageConfigured, getStorageBackend }
 
 // ============================================
 // ERROR HANDLING & RETRY UTILITIES
@@ -591,28 +595,37 @@ export function getRecordingsForReader(readerId: string): Recording[] {
   return loadFromStorage<Recording[]>(STORAGE_KEYS.recordings, []).filter(r => r.reader_id === readerId)
 }
 
-// Upload audio to Supabase Storage
-async function uploadAudioToSupabase(audioBlob: Blob, recordingId: string): Promise<string | null> {
-  if (!isSupabaseConfigured || !supabase) return null
+// Upload audio to storage backend (R2 or Supabase)
+async function uploadAudioToStorage(audioBlob: Blob, recordingId: string): Promise<string | null> {
+  const backend = getStorageBackend()
 
-  const fileName = `${recordingId}.webm`
-  const { data, error } = await supabase.storage
-    .from('audio')
-    .upload(fileName, audioBlob, {
-      contentType: 'audio/webm',
-      upsert: true,
-    })
-
-  if (error) {
-    console.error('Error uploading audio:', error)
+  if (!backend.isConfigured()) {
+    console.warn('[Storage] Geen storage backend geconfigureerd')
     return null
   }
 
-  const { data: urlData } = supabase.storage
-    .from('audio')
-    .getPublicUrl(data.path)
+  console.log(`[Storage] Uploading to ${backend.name}...`)
+  const url = await backend.upload(recordingId, audioBlob)
 
-  return urlData.publicUrl
+  if (url) {
+    console.log(`[Storage] Upload succesvol naar ${backend.name}`)
+  } else {
+    console.error(`[Storage] Upload naar ${backend.name} mislukt`)
+  }
+
+  return url
+}
+
+// Delete audio from storage backend (R2 or Supabase)
+async function deleteAudioFromStorage(recordingId: string): Promise<boolean> {
+  const backend = getStorageBackend()
+
+  if (!backend.isConfigured()) {
+    return false
+  }
+
+  console.log(`[Storage] Deleting from ${backend.name}...`)
+  return backend.delete(recordingId)
 }
 
 export async function addRecordingAsync(
@@ -624,9 +637,9 @@ export async function addRecordingAsync(
   const recordingId = crypto.randomUUID()
   let audioUrl: string
 
-  // If audioData is a Blob and Supabase is configured, upload to storage
-  if (audioData instanceof Blob && isSupabaseConfigured && supabase) {
-    const uploadedUrl = await uploadAudioToSupabase(audioData, recordingId)
+  // If audioData is a Blob and any storage backend is configured, upload to storage
+  if (audioData instanceof Blob && isAnyStorageConfigured()) {
+    const uploadedUrl = await uploadAudioToStorage(audioData, recordingId)
     if (uploadedUrl) {
       audioUrl = uploadedUrl
     } else {
@@ -685,13 +698,13 @@ export function addRecording(chapterId: string, readerId: string, audioUrl: stri
 
   if (isSupabaseConfigured && supabase) {
     const sb = supabase // Capture for closure
-    // For Supabase, we need to upload the audio if it's base64
-    if (audioUrl.startsWith('data:')) {
+    // For storage backends, we need to upload the audio if it's base64
+    if (audioUrl.startsWith('data:') && isAnyStorageConfigured()) {
       // Convert base64 to blob and upload
       fetch(audioUrl)
         .then(res => res.blob())
         .then(async (blob) => {
-          const uploadedUrl = await uploadAudioToSupabase(blob, newRecording.id)
+          const uploadedUrl = await uploadAudioToStorage(blob, newRecording.id)
           const recordingToInsert = {
             ...newRecording,
             audio_url: uploadedUrl || audioUrl,
@@ -714,11 +727,12 @@ export async function deleteRecordingAsync(id: string): Promise<void> {
   const recordings = loadFromStorage<Recording[]>(STORAGE_KEYS.recordings, []).filter(r => r.id !== id)
   saveToStorage(STORAGE_KEYS.recordings, recordings)
 
-  if (isSupabaseConfigured && supabase) {
-    // Delete from storage
-    const { error: storageError } = await supabase.storage.from('audio').remove([`${id}.webm`])
-    if (storageError) console.error('Error deleting audio from storage:', storageError)
+  // Delete from storage backend (R2 or Supabase Storage)
+  if (isAnyStorageConfigured()) {
+    await deleteAudioFromStorage(id)
+  }
 
+  if (isSupabaseConfigured && supabase) {
     // Delete from database
     const { error: dbError } = await supabase.from('recordings').delete().eq('id', id)
     if (dbError) {
@@ -737,11 +751,14 @@ export function deleteRecording(id: string): void {
   const recordings = loadFromStorage<Recording[]>(STORAGE_KEYS.recordings, []).filter(r => r.id !== id)
   saveToStorage(STORAGE_KEYS.recordings, recordings)
 
-  if (isSupabaseConfigured && supabase) {
-    // Delete from storage
-    supabase.storage.from('audio').remove([`${id}.webm`]).then(({ error }) => {
-      if (error) console.error('Error deleting audio from storage:', error)
+  // Delete from storage backend (R2 or Supabase Storage)
+  if (isAnyStorageConfigured()) {
+    deleteAudioFromStorage(id).catch((error) => {
+      console.error('Error deleting audio from storage:', error)
     })
+  }
+
+  if (isSupabaseConfigured && supabase) {
     // Delete from database
     supabase.from('recordings').delete().eq('id', id).then(({ error }) => {
       if (error) {
@@ -900,15 +917,45 @@ export function getChapterWithRecordings(chapterId: string) {
 }
 
 // ============================================
-// PROGRESS TRACKING
+// PROGRESS TRACKING (per-listener)
 // ============================================
 
-export function getProgress(): Record<string, ChapterProgress> {
-  return loadFromStorage(STORAGE_KEYS.progress, {})
+// Active listener for progress tracking
+let activeListenerId: string | null = null
+
+export function setActiveListener(listenerId: string | null): void {
+  activeListenerId = listenerId
+  if (listenerId) {
+    sessionStorage.setItem('voorleesbibliotheek_active_listener', listenerId)
+  } else {
+    sessionStorage.removeItem('voorleesbibliotheek_active_listener')
+  }
 }
 
-export function getChapterProgress(chapterId: string): ChapterProgress | null {
-  const progress = getProgress()
+export function getActiveListener(): string | null {
+  if (activeListenerId) return activeListenerId
+  const stored = sessionStorage.getItem('voorleesbibliotheek_active_listener')
+  if (stored) {
+    activeListenerId = stored
+    return stored
+  }
+  return null
+}
+
+function getProgressKey(listenerId?: string): string {
+  const id = listenerId || activeListenerId
+  if (id) {
+    return `${STORAGE_KEYS.progress}_${id}`
+  }
+  return STORAGE_KEYS.progress
+}
+
+export function getProgress(listenerId?: string): Record<string, ChapterProgress> {
+  return loadFromStorage(getProgressKey(listenerId), {})
+}
+
+export function getChapterProgress(chapterId: string, listenerId?: string): ChapterProgress | null {
+  const progress = getProgress(listenerId)
   return progress[chapterId] || null
 }
 
@@ -916,9 +963,11 @@ export function saveChapterProgress(
   chapterId: string,
   recordingId: string,
   currentTime: number,
-  duration: number
+  duration: number,
+  listenerId?: string
 ): void {
-  const progress = getProgress()
+  const key = getProgressKey(listenerId)
+  const progress = loadFromStorage<Record<string, ChapterProgress>>(key, {})
   const completed = duration > 0 && currentTime >= duration - 5
   progress[chapterId] = {
     chapterId,
@@ -928,12 +977,13 @@ export function saveChapterProgress(
     completed,
     lastPlayed: new Date().toISOString(),
   }
-  saveToStorage(STORAGE_KEYS.progress, progress)
+  saveToStorage(key, progress)
 
   if (isSupabaseConfigured && supabase) {
     supabase.from('progress').upsert({
       chapter_id: chapterId,
       recording_id: recordingId,
+      listener_id: listenerId || activeListenerId,
       playback_position: currentTime,
       duration,
       completed,
@@ -941,6 +991,21 @@ export function saveChapterProgress(
     }, { onConflict: 'chapter_id' }).then(({ error }) => {
       if (error) console.error('Error syncing progress to Supabase:', error)
     })
+  }
+}
+
+// Migrate old global progress to a specific listener
+export function migrateGlobalProgress(listenerId: string): void {
+  const globalProgress = loadFromStorage<Record<string, ChapterProgress>>(STORAGE_KEYS.progress, {})
+  if (Object.keys(globalProgress).length > 0) {
+    const listenerKey = `${STORAGE_KEYS.progress}_${listenerId}`
+    const existingListenerProgress = loadFromStorage<Record<string, ChapterProgress>>(listenerKey, {})
+    // Only migrate if listener doesn't already have progress
+    if (Object.keys(existingListenerProgress).length === 0) {
+      saveToStorage(listenerKey, globalProgress)
+    }
+    // Clear global progress after migration
+    saveToStorage(STORAGE_KEYS.progress, {})
   }
 }
 

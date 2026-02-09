@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
-import { Button, Card, Avatar, ConfirmDialog } from '../components/ui'
+import { Button, Card, Avatar, ConfirmDialog, useToast } from '../components/ui'
 import {
   getBooks,
   getBook,
@@ -29,8 +29,169 @@ import type { Book, Chapter, User } from '../types'
 
 type Tab = 'books' | 'readers' | 'stats'
 
+const ADMIN_PIN_KEY = 'voorleesbibliotheek_admin_pin'
+const ADMIN_SESSION_KEY = 'voorleesbibliotheek_admin_session'
+
+function PinGate({ onUnlock }: { onUnlock: () => void }) {
+  const navigate = useNavigate()
+  const [pin, setPin] = useState('')
+  const [error, setError] = useState('')
+  const [isSetup, setIsSetup] = useState(false)
+  const [confirmPin, setConfirmPin] = useState('')
+  const [step, setStep] = useState<'enter' | 'confirm'>('enter')
+
+  useEffect(() => {
+    const storedPin = localStorage.getItem(ADMIN_PIN_KEY)
+    if (!storedPin) {
+      setIsSetup(true)
+    }
+  }, [])
+
+  const handlePinInput = (digit: string) => {
+    if (isSetup) {
+      if (step === 'enter') {
+        const newPin = pin + digit
+        setPin(newPin)
+        setError('')
+        if (newPin.length === 4) {
+          setStep('confirm')
+          setConfirmPin('')
+        }
+      } else {
+        const newConfirm = confirmPin + digit
+        setConfirmPin(newConfirm)
+        setError('')
+        if (newConfirm.length === 4) {
+          if (newConfirm === pin) {
+            localStorage.setItem(ADMIN_PIN_KEY, pin)
+            sessionStorage.setItem(ADMIN_SESSION_KEY, 'true')
+            onUnlock()
+          } else {
+            setError('Pincodes komen niet overeen')
+            setPin('')
+            setConfirmPin('')
+            setStep('enter')
+          }
+        }
+      }
+    } else {
+      const newPin = pin + digit
+      setPin(newPin)
+      setError('')
+      if (newPin.length === 4) {
+        const storedPin = localStorage.getItem(ADMIN_PIN_KEY)
+        if (newPin === storedPin) {
+          sessionStorage.setItem(ADMIN_SESSION_KEY, 'true')
+          onUnlock()
+        } else {
+          setError('Onjuiste pincode')
+          setPin('')
+        }
+      }
+    }
+  }
+
+  const handleBackspace = () => {
+    if (isSetup && step === 'confirm') {
+      setConfirmPin(prev => prev.slice(0, -1))
+    } else {
+      setPin(prev => prev.slice(0, -1))
+    }
+    setError('')
+  }
+
+  const currentPin = isSetup && step === 'confirm' ? confirmPin : pin
+
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center p-6">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="w-full max-w-xs text-center"
+      >
+        <div className="text-5xl mb-4">🔒</div>
+        <h1 className="font-display text-2xl text-cocoa mb-2">
+          {isSetup
+            ? step === 'enter' ? 'Kies een pincode' : 'Bevestig pincode'
+            : 'Voer pincode in'
+          }
+        </h1>
+        <p className="text-cocoa-light text-sm mb-8">
+          {isSetup
+            ? step === 'enter' ? 'Kies een 4-cijferige code voor de beheerpagina' : 'Voer dezelfde code nogmaals in'
+            : 'Voer je 4-cijferige pincode in om verder te gaan'
+          }
+        </p>
+
+        {/* Pin dots */}
+        <div className="flex justify-center gap-4 mb-6">
+          {[0, 1, 2, 3].map(i => (
+            <motion.div
+              key={i}
+              animate={error ? { x: [-4, 4, -4, 4, 0] } : {}}
+              transition={{ duration: 0.3 }}
+              className={`w-4 h-4 rounded-full transition-colors ${
+                i < currentPin.length ? 'bg-honey' : 'bg-cream-dark'
+              } ${error ? 'bg-sunset' : ''}`}
+            />
+          ))}
+        </div>
+
+        {error && (
+          <motion.p
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="text-sunset text-sm mb-4"
+          >
+            {error}
+          </motion.p>
+        )}
+
+        {/* Number pad */}
+        <div className="grid grid-cols-3 gap-3 max-w-[240px] mx-auto">
+          {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(num => (
+            <button
+              key={num}
+              onClick={() => handlePinInput(String(num))}
+              className="w-16 h-16 rounded-2xl bg-white shadow-soft text-xl font-display text-cocoa hover:bg-cream active:scale-95 transition-all"
+            >
+              {num}
+            </button>
+          ))}
+          <button
+            onClick={() => navigate('/')}
+            className="w-16 h-16 rounded-2xl text-cocoa-light hover:bg-cream-dark/50 flex items-center justify-center transition-colors"
+          >
+            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+          <button
+            onClick={() => handlePinInput('0')}
+            className="w-16 h-16 rounded-2xl bg-white shadow-soft text-xl font-display text-cocoa hover:bg-cream active:scale-95 transition-all"
+          >
+            0
+          </button>
+          <button
+            onClick={handleBackspace}
+            className="w-16 h-16 rounded-2xl text-cocoa-light hover:bg-cream-dark/50 flex items-center justify-center transition-colors"
+          >
+            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M3 12l6.414-6.414a2 2 0 011.414-.586H19a2 2 0 012 2v10a2 2 0 01-2 2h-8.172a2 2 0 01-1.414-.586L3 12z" />
+            </svg>
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  )
+}
+
 export function AdminPage() {
   const navigate = useNavigate()
+  const { showToast } = useToast()
+  const [isUnlocked, setIsUnlocked] = useState(() => {
+    return sessionStorage.getItem(ADMIN_SESSION_KEY) === 'true'
+  })
   const [tab, setTab] = useState<Tab>('books')
   const [books, setBooks] = useState<Book[]>([])
   const [users, setUsers] = useState<User[]>([])
@@ -85,6 +246,7 @@ export function AdminPage() {
   // Resync state
   const [isResyncing, setIsResyncing] = useState(false)
   const [resyncMessage, setResyncMessage] = useState<string | null>(null)
+
 
   const handleResync = async () => {
     setIsResyncing(true)
@@ -278,7 +440,7 @@ export function AdminPage() {
 
   const searchChaptersOnline = async () => {
     if (!newBookTitle.trim()) {
-      alert('Vul eerst een boektitel in')
+      showToast('Vul eerst een boektitel in', 'error')
       return
     }
 
@@ -366,17 +528,11 @@ export function AdminPage() {
         setNewChaptersText(chaptersFound.join('\n'))
       } else {
         // Show helpful message
-        alert(
-          `Geen hoofdstukken gevonden voor "${newBookTitle}".\n\n` +
-          'Tip: Kopieer de inhoudsopgave van het boek en plak deze in het tekstveld.'
-        )
+        showToast(`Geen hoofdstukken gevonden voor "${newBookTitle}". Kopieer de inhoudsopgave handmatig.`, 'info', 5000)
       }
     } catch (error) {
       console.error('Error searching for chapters:', error)
-      alert(
-        'Er ging iets mis bij het zoeken.\n\n' +
-        'Tip: Kopieer de inhoudsopgave van het boek en plak deze in het tekstveld.'
-      )
+      showToast('Er ging iets mis bij het zoeken. Kopieer de inhoudsopgave handmatig.', 'error', 5000)
     } finally {
       setIsSearchingChapters(false)
     }
@@ -634,7 +790,7 @@ export function AdminPage() {
     const hasAudioExtension = /\.(mp3|wav|m4a|ogg|webm)$/i.test(file.name)
 
     if (!hasAudioMimeType && !hasAudioExtension) {
-      alert('Selecteer een audiobestand (mp3, wav, m4a, etc.)')
+      showToast('Selecteer een audiobestand (mp3, wav, m4a, etc.)', 'error')
       return
     }
 
@@ -672,7 +828,7 @@ export function AdminPage() {
       setExpandedChapters(prev => new Set(prev))
     } catch (error) {
       console.error('Error uploading audio:', error)
-      alert('Er ging iets mis bij het uploaden van de audio.')
+      showToast('Er ging iets mis bij het uploaden van de audio.', 'error')
     } finally {
       setIsUploadingAudio(false)
       setPendingAudioFile(null)
@@ -686,7 +842,7 @@ export function AdminPage() {
 
     // Check file size (max 500KB to keep localStorage manageable)
     if (file.size > 500 * 1024) {
-      alert('De foto is te groot. Kies een foto kleiner dan 500KB.')
+      showToast('De foto is te groot. Kies een foto kleiner dan 500KB.', 'error')
       return
     }
 
@@ -737,7 +893,7 @@ export function AdminPage() {
   const handleDeleteReader = (userId: string) => {
     const user = users.find(u => u.id === userId)
     if (user?.role === 'admin') {
-      alert('Je kunt geen beheerder verwijderen.')
+      showToast('Je kunt geen beheerder verwijderen.', 'error')
       return
     }
     setConfirmDialog({
@@ -750,6 +906,10 @@ export function AdminPage() {
         setUsers(getUsers())
       },
     })
+  }
+
+  if (!isUnlocked) {
+    return <PinGate onUnlock={() => setIsUnlocked(true)} />
   }
 
   return (
@@ -1447,6 +1607,7 @@ export function AdminPage() {
                     )}
                   </div>
                 </Card>
+
               </>
             )
           })()}
