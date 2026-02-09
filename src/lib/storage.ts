@@ -822,7 +822,7 @@ export function getUsers(): User[] {
   return users
 }
 
-export function addUser(name: string, role: 'reader' | 'admin' = 'reader'): User {
+export function addUser(name: string, role: 'reader' | 'admin' | 'listener' = 'reader'): User {
   const newUser: User = {
     id: crypto.randomUUID(),
     family_id: '1',

@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from './ui'
-import { getChapterProgress, saveChapterProgress, getChapterWithRecordings, getActiveListener } from '../lib/storage'
+import { getChapterProgress, saveChapterProgress, getChapterWithRecordings } from '../lib/storage'
 import type { Recording, Chapter, Book, User } from '../types'
 
 interface ChapterWithRecordingStatus extends Chapter {

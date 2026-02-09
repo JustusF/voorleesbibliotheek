@@ -996,7 +996,7 @@ export function ListenPage() {
             const r = users.find(u => u.id === rec.reader_id)
             return r ? { recording: rec, reader: r } : null
           })
-          .filter((item): item is { recording: Recording; reader: User } => item !== null) || []
+          .filter((item): item is NonNullable<typeof item> => item !== null) || []
 
         return (
           <AudioPlayer
