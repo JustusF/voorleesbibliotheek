@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from './ui'
 import { getChapterProgress, saveChapterProgress, getChapterWithRecordings } from '../lib/storage'
+import { playChapterChime } from '../lib/chime'
 import type { Recording, Chapter, Book, User } from '../types'
 
 interface ChapterWithRecordingStatus extends Chapter {
@@ -187,10 +188,11 @@ export function AudioPlayer({
       // If sleep timer is "end of chapter", don't auto-play next
       if (sleepTimer === 'end_of_chapter') {
         setSleepTimer(null)
+        playChapterChime()
         return
       }
       if (onNext) {
-        onNext()
+        playChapterChime().then(() => onNext())
       }
     }
     const handleWaiting = () => setIsBuffering(true)
