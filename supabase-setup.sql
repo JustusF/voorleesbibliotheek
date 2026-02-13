@@ -45,16 +45,17 @@ CREATE TABLE IF NOT EXISTS recordings (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Progress tracking table
+-- Progress tracking table (per listener per chapter)
 CREATE TABLE IF NOT EXISTS progress (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   chapter_id UUID NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
   recording_id UUID NOT NULL REFERENCES recordings(id) ON DELETE CASCADE,
+  listener_id UUID REFERENCES users(id) ON DELETE CASCADE,
   playback_position FLOAT DEFAULT 0,
   duration FLOAT DEFAULT 0,
   completed BOOLEAN DEFAULT FALSE,
   last_played TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(chapter_id)
+  UNIQUE(chapter_id, listener_id)
 );
 
 -- Create indexes for better performance
@@ -62,6 +63,7 @@ CREATE INDEX IF NOT EXISTS idx_chapters_book_id ON chapters(book_id);
 CREATE INDEX IF NOT EXISTS idx_recordings_chapter_id ON recordings(chapter_id);
 CREATE INDEX IF NOT EXISTS idx_recordings_reader_id ON recordings(reader_id);
 CREATE INDEX IF NOT EXISTS idx_progress_chapter_id ON progress(chapter_id);
+CREATE INDEX IF NOT EXISTS idx_progress_listener_id ON progress(listener_id);
 
 -- Insert default users for Familie Van Rij
 INSERT INTO users (id, family_id, name, role) VALUES

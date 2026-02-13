@@ -7,7 +7,7 @@ interface AudioRecorderProps {
   onCancel: () => void
 }
 
-type RecordingState = 'idle' | 'requesting_permission' | 'permission_denied' | 'recording' | 'paused' | 'recorded' | 'playing'
+type RecordingState = 'idle' | 'requesting_permission' | 'permission_denied' | 'mic_test' | 'recording' | 'paused' | 'recorded' | 'playing'
 
 export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderProps) {
   const [state, setState] = useState<RecordingState>('idle')
@@ -22,8 +22,11 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
   const blobRef = useRef<Blob | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const animationRef = useRef<number | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const audioContextRef = useRef<AudioContext | null>(null)
   const [audioLevels, setAudioLevels] = useState<number[]>(Array(20).fill(0))
   const [showRecordingFlash, setShowRecordingFlash] = useState(false)
+  const [micTestPeak, setMicTestPeak] = useState(0)
 
   // Check if microphone is available
   useEffect(() => {
@@ -41,9 +44,11 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
     checkMicrophonePermission()
   }, [])
 
-  const startRecording = useCallback(async () => {
+  // Request mic permission and start mic test
+  const startMicTest = useCallback(async () => {
     setState('requesting_permission')
     setPermissionError(null)
+    setMicTestPeak(0)
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -53,76 +58,39 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
           autoGainControl: true,
         }
       })
+      streamRef.current = stream
 
       // Setup audio analyser for waveform visualization
       const audioContext = new AudioContext()
+      audioContextRef.current = audioContext
       const source = audioContext.createMediaStreamSource(stream)
       const analyser = audioContext.createAnalyser()
       analyser.fftSize = 64
       source.connect(analyser)
       analyserRef.current = analyser
 
-      // Start animation loop for audio levels
+      // Start animation loop for audio levels (mic test)
       const updateLevels = () => {
         if (analyserRef.current) {
           const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount)
           analyserRef.current.getByteFrequencyData(dataArray)
-          // Take 20 samples across the frequency range
           const levels: number[] = []
           const step = Math.floor(dataArray.length / 20)
           for (let i = 0; i < 20; i++) {
             levels.push(dataArray[i * step] / 255)
           }
           setAudioLevels(levels)
+          // Track peak level for mic test feedback
+          const avg = levels.reduce((a, b) => a + b, 0) / levels.length
+          setMicTestPeak(prev => Math.max(prev, avg))
         }
         animationRef.current = requestAnimationFrame(updateLevels)
       }
       updateLevels()
 
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4'
-      })
-      mediaRecorderRef.current = mediaRecorder
-      chunksRef.current = []
-
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          chunksRef.current.push(e.data)
-        }
-      }
-
-      mediaRecorder.onstop = () => {
-        const mimeType = mediaRecorder.mimeType || 'audio/webm'
-        const blob = new Blob(chunksRef.current, { type: mimeType })
-        blobRef.current = blob
-        const url = URL.createObjectURL(blob)
-        setAudioUrl(url)
-        setState('recorded')
-        stream.getTracks().forEach(track => track.stop())
-        // Stop animation
-        if (animationRef.current) {
-          cancelAnimationFrame(animationRef.current)
-          animationRef.current = null
-        }
-        setAudioLevels(Array(20).fill(0))
-      }
-
-      mediaRecorder.start()
-      setState('recording')
-      setDuration(0)
-
-      // Haptic + visual feedback on mobile when recording starts
-      if (navigator.vibrate) {
-        navigator.vibrate([50, 30, 50])
-      }
-      setShowRecordingFlash(true)
-      setTimeout(() => setShowRecordingFlash(false), 600)
-
-      timerRef.current = setInterval(() => {
-        setDuration(d => d + 1)
-      }, 1000)
+      setState('mic_test')
     } catch (err) {
-      console.error('Failed to start recording:', err)
+      console.error('Failed to access microphone:', err)
       setState('permission_denied')
 
       if (err instanceof DOMException) {
@@ -139,6 +107,56 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
         setPermissionError('Er ging iets mis. Probeer het opnieuw.')
       }
     }
+  }, [])
+
+  // Start actual recording (after mic test passes)
+  const startRecording = useCallback(() => {
+    const stream = streamRef.current
+    if (!stream) return
+
+    const mediaRecorder = new MediaRecorder(stream, {
+      mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4'
+    })
+    mediaRecorderRef.current = mediaRecorder
+    chunksRef.current = []
+
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) {
+        chunksRef.current.push(e.data)
+      }
+    }
+
+    mediaRecorder.onstop = () => {
+      const mimeType = mediaRecorder.mimeType || 'audio/webm'
+      const blob = new Blob(chunksRef.current, { type: mimeType })
+      blobRef.current = blob
+      const url = URL.createObjectURL(blob)
+      setAudioUrl(url)
+      setState('recorded')
+      stream.getTracks().forEach(track => track.stop())
+      streamRef.current = null
+      // Stop animation
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current)
+        animationRef.current = null
+      }
+      setAudioLevels(Array(20).fill(0))
+    }
+
+    mediaRecorder.start()
+    setState('recording')
+    setDuration(0)
+
+    // Haptic + visual feedback on mobile when recording starts
+    if (navigator.vibrate) {
+      navigator.vibrate([50, 30, 50])
+    }
+    setShowRecordingFlash(true)
+    setTimeout(() => setShowRecordingFlash(false), 600)
+
+    timerRef.current = setInterval(() => {
+      setDuration(d => d + 1)
+    }, 1000)
   }, [])
 
   const stopRecording = useCallback(() => {
@@ -212,9 +230,19 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
     if (audioUrl) {
       URL.revokeObjectURL(audioUrl)
     }
+    // Clean up stream if still active
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop())
+      streamRef.current = null
+    }
+    if (animationRef.current) {
+      cancelAnimationFrame(animationRef.current)
+      animationRef.current = null
+    }
     setAudioUrl(null)
     blobRef.current = null
     setDuration(0)
+    setMicTestPeak(0)
     setState('idle')
   }, [audioUrl])
 
@@ -251,6 +279,7 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
           {state === 'idle' && 'Klaar om op te nemen'}
           {state === 'requesting_permission' && 'Even geduld...'}
           {state === 'permission_denied' && 'Microfoon nodig'}
+          {state === 'mic_test' && 'Test je microfoon'}
           {state === 'recording' && 'Aan het opnemen...'}
           {state === 'paused' && 'Gepauzeerd'}
           {(state === 'recorded' || state === 'playing') && 'Opname klaar!'}
@@ -259,6 +288,7 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
           {state === 'idle' && 'Druk op de knop om te beginnen'}
           {state === 'requesting_permission' && 'We vragen toegang tot je microfoon...'}
           {state === 'permission_denied' && permissionError}
+          {state === 'mic_test' && 'Zeg iets om te controleren of je microfoon werkt'}
           {state === 'recording' && 'Spreek duidelijk in de microfoon'}
           {state === 'paused' && 'Druk op de knop om verder te gaan'}
           {(state === 'recorded' || state === 'playing') && 'Beluister je opname hieronder'}
@@ -280,6 +310,50 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
         </motion.div>
       </div>
 
+      {/* Mic test volume meter */}
+      {state === 'mic_test' && (
+        <div className="mb-6">
+          <div className="flex items-center justify-center gap-1 h-16 mb-3" aria-hidden="true" role="presentation">
+            {audioLevels.map((level, i) => (
+              <motion.div
+                key={i}
+                className="w-2 rounded-full bg-gradient-to-t from-moss to-honey"
+                animate={{ height: Math.max(8, level * 60) }}
+                transition={{ duration: 0.05 }}
+              />
+            ))}
+          </div>
+          {/* Volume indicator */}
+          <div className="flex items-center gap-2 justify-center">
+            <div className="flex-1 max-w-[200px] bg-cream-dark rounded-full h-2 overflow-hidden">
+              <motion.div
+                className={`h-full rounded-full ${
+                  micTestPeak > 0.15 ? 'bg-moss' :
+                  micTestPeak > 0.05 ? 'bg-honey' : 'bg-cocoa-light'
+                }`}
+                animate={{ width: `${Math.min(100, micTestPeak * 300)}%` }}
+                transition={{ duration: 0.2 }}
+              />
+            </div>
+          </div>
+          {micTestPeak < 0.05 && (
+            <p className="text-center text-sm text-sunset mt-2">
+              We horen nog niets — zeg iets of controleer je microfoon
+            </p>
+          )}
+          {micTestPeak >= 0.05 && micTestPeak < 0.15 && (
+            <p className="text-center text-sm text-honey-dark mt-2">
+              Volume is laag — probeer dichter bij de microfoon te spreken
+            </p>
+          )}
+          {micTestPeak >= 0.15 && (
+            <p className="text-center text-sm text-moss mt-2">
+              Microfoon werkt goed!
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Audio waveform visualization */}
       {(state === 'recording' || state === 'paused') && (
         <div className="flex items-center justify-center gap-1 h-16 mb-6" aria-hidden="true" role="presentation">
@@ -295,11 +369,19 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
       )}
 
       {/* Spacer when not recording */}
-      {state !== 'recording' && state !== 'paused' && <div className="h-4 mb-4" />}
+      {state !== 'recording' && state !== 'paused' && state !== 'mic_test' && <div className="h-4 mb-4" />}
 
       {/* Main control */}
       <div className="flex justify-center mb-8" role="group" aria-label="Opname bediening">
         {(state === 'idle' || state === 'permission_denied') && (
+          <Button variant="record" size="xl" onClick={startMicTest} aria-label="Test microfoon">
+            <svg className="w-12 h-12" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="6" />
+            </svg>
+          </Button>
+        )}
+
+        {state === 'mic_test' && (
           <Button variant="record" size="xl" onClick={startRecording} aria-label="Start opname">
             <svg className="w-12 h-12" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <circle cx="12" cy="12" r="6" />
@@ -388,6 +470,32 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
           <Button variant="ghost" onClick={onCancel}>
             Annuleren
           </Button>
+        )}
+
+        {state === 'mic_test' && (
+          <>
+            <Button variant="ghost" onClick={() => {
+              // Stop stream and go back
+              if (streamRef.current) {
+                streamRef.current.getTracks().forEach(track => track.stop())
+                streamRef.current = null
+              }
+              if (animationRef.current) {
+                cancelAnimationFrame(animationRef.current)
+                animationRef.current = null
+              }
+              setAudioLevels(Array(20).fill(0))
+              onCancel()
+            }}>
+              Annuleren
+            </Button>
+            <Button variant="primary" onClick={startRecording}>
+              <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="6" />
+              </svg>
+              Start opname
+            </Button>
+          </>
         )}
 
         {state === 'recording' && (

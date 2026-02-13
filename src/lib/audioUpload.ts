@@ -117,6 +117,8 @@ async function detectAudioDuration(file: File): Promise<number> {
   })
 }
 
+export type UploadProgressCallback = (progress: number) => void
+
 /**
  * Main upload function - validates, detects duration, and uploads audio file
  */
@@ -124,7 +126,8 @@ export async function uploadAudioFile(
   file: File,
   chapterId: string,
   readerId: string,
-  config?: Partial<AudioValidationConfig>
+  config?: Partial<AudioValidationConfig>,
+  onProgress?: UploadProgressCallback
 ): Promise<AudioUploadResult> {
   // Merge with default config
   const fullConfig: AudioValidationConfig = {
@@ -158,12 +161,30 @@ export async function uploadAudioFile(
 
     // Step 3: Replace existing or add new recording (prevents duplicates)
     try {
+      // Signal upload start
+      onProgress?.(5)
+
+      // Estimate upload progress based on file size
+      // ~500KB/s average upload speed assumption for progress indication
+      const estimatedDurationMs = Math.max(1000, (file.size / (500 * 1024)) * 1000)
+      const progressInterval = 200 // update every 200ms
+      const steps = estimatedDurationMs / progressInterval
+      let currentProgress = 5
+      const progressTimer = setInterval(() => {
+        // Approach 90% asymptotically
+        currentProgress += (90 - currentProgress) / steps
+        onProgress?.(Math.min(Math.round(currentProgress), 90))
+      }, progressInterval)
+
       const recording = await replaceRecordingAsync(
         chapterId,
         readerId,
         file, // Pass the File directly (it's a Blob)
         duration
       )
+
+      clearInterval(progressTimer)
+      onProgress?.(100)
 
       return {
         success: true,

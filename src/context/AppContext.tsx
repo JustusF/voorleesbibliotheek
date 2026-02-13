@@ -1,4 +1,4 @@
-import { createContext, useContext, useReducer, useEffect, useCallback, type ReactNode } from 'react'
+import { createContext, useContext, useReducer, useEffect, useCallback, useMemo, type ReactNode } from 'react'
 import {
   getBooksAsync,
   getUsersAsync,
@@ -202,6 +202,27 @@ const AppContext = createContext<AppContextValue | null>(null)
 // PROVIDER
 // ============================================
 
+// Retry helper with exponential backoff
+async function retryWithBackoff<T>(
+  fn: () => Promise<T>,
+  maxRetries: number = 3,
+  baseDelay: number = 1000
+): Promise<T> {
+  let lastError: unknown
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn()
+    } catch (error) {
+      lastError = error
+      if (attempt < maxRetries) {
+        const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 500
+        await new Promise(resolve => setTimeout(resolve, delay))
+      }
+    }
+  }
+  throw lastError
+}
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(appReducer, initialState)
 
@@ -249,12 +270,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     try {
       if (isSupabaseConfigured) {
-        const [books, chapters, recordings, users] = await Promise.all([
-          getBooksAsync(),
-          getChaptersAsync(),
-          getRecordingsAsync(),
-          getUsersAsync(),
-        ])
+        const [books, chapters, recordings, users] = await retryWithBackoff(() =>
+          Promise.all([
+            getBooksAsync(),
+            getChaptersAsync(),
+            getRecordingsAsync(),
+            getUsersAsync(),
+          ])
+        )
 
         dispatch({ type: 'SET_BOOKS', payload: books })
         dispatch({ type: 'SET_CHAPTERS', payload: chapters })
@@ -271,22 +294,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
       dispatch({ type: 'SET_PROGRESS', payload: getProgress() })
       dispatch({ type: 'SET_SYNC_STATUS', payload: 'success' })
 
-      // Reset sync status after delay
       setTimeout(() => {
         dispatch({ type: 'SET_SYNC_STATUS', payload: 'idle' })
       }, 2000)
     } catch (error) {
       console.error('Failed to refresh data:', error)
+
+      // Fallback to localStorage on failure
+      dispatch({ type: 'SET_BOOKS', payload: getBooks() })
+      dispatch({ type: 'SET_CHAPTERS', payload: getChapters() })
+      dispatch({ type: 'SET_RECORDINGS', payload: getRecordings() })
+      dispatch({ type: 'SET_USERS', payload: getUsers() })
+      dispatch({ type: 'SET_PROGRESS', payload: getProgress() })
+
       dispatch({
         type: 'SET_ERROR',
         payload: {
-          message: 'Kon gegevens niet laden. Probeer het opnieuw.',
+          message: 'Kon niet synchroniseren. Lokale gegevens worden getoond.',
           timestamp: new Date(),
         },
       })
       dispatch({ type: 'SET_SYNC_STATUS', payload: 'error' })
 
-      // Reset sync status after delay
       setTimeout(() => {
         dispatch({ type: 'SET_SYNC_STATUS', payload: 'idle' })
       }, 3000)
@@ -307,7 +336,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (isSupabaseConfigured && state.isOnline) {
         dispatch({ type: 'SET_SYNC_STATUS', payload: 'syncing' })
         try {
-          await syncFromSupabase()
+          await retryWithBackoff(() => syncFromSupabase(), 2, 1000)
           // Reload data from localStorage (now updated with Supabase data)
           dispatch({ type: 'SET_BOOKS', payload: getBooks() })
           dispatch({ type: 'SET_CHAPTERS', payload: getChapters() })
@@ -450,15 +479,18 @@ export function useUsers() {
 }
 
 export function useReaders() {
-  const { getReaders } = useApp()
-  return getReaders()
+  const { state } = useApp()
+  return useMemo(
+    () => state.users.filter((u) => u.role === 'reader' || u.role === 'admin'),
+    [state.users]
+  )
 }
 
 export function useSyncStatus() {
   const { state } = useApp()
-  return {
+  return useMemo(() => ({
     isOnline: state.isOnline,
     syncStatus: state.syncStatus,
     isLoading: state.isLoading,
-  }
+  }), [state.isOnline, state.syncStatus, state.isLoading])
 }

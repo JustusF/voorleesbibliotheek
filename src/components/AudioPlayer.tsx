@@ -45,21 +45,42 @@ export function AudioPlayer({
   const [isLoading, setIsLoading] = useState(true)
   const [isBuffering, setIsBuffering] = useState(false)
   const [hasError, setHasError] = useState(false)
-  const [currentTime, setCurrentTime] = useState(0)
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false)
+  const currentTimeRef = useRef(0)
+  const [displayTime, setDisplayTime] = useState(0)
   const [duration, setDuration] = useState(recording.duration_seconds || 0)
   const [showChapterList, setShowChapterList] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const lastSaveRef = useRef(0)
+  const lastDisplayUpdateRef = useRef(0)
   const previousRecordingIdRef = useRef(recording.id)
   const wasPlayingRef = useRef(false)
+  const progressBarRef = useRef<HTMLDivElement>(null)
 
-  // Playback speed
-  const [playbackSpeed, setPlaybackSpeed] = useState<PlaybackSpeed>(1)
+  // Playback speed - persist in localStorage
+  const [playbackSpeed, setPlaybackSpeed] = useState<PlaybackSpeed>(() => {
+    const saved = localStorage.getItem('voorleesbibliotheek_playback_speed')
+    if (saved) {
+      const parsed = parseFloat(saved)
+      if ([0.75, 1, 1.25, 1.5, 2].includes(parsed)) return parsed as PlaybackSpeed
+    }
+    return 1
+  })
 
   // Sleep timer
   const [sleepTimer, setSleepTimer] = useState<SleepTimerOption>(null)
   const [sleepTimeRemaining, setSleepTimeRemaining] = useState<number | null>(null)
   const sleepTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Auto-play next chapter countdown
+  const [autoPlayCountdown, setAutoPlayCountdown] = useState<number | null>(null)
+  const autoPlayTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const pendingNextRef = useRef<(() => void) | null>(null)
+
+  // Chime preference (persisted)
+  const [chimeEnabled, setChimeEnabled] = useState(() => {
+    return localStorage.getItem('voorleesbibliotheek_chime_enabled') !== 'false'
+  })
 
   // Build chapter list with recording status
   const chaptersWithStatus: ChapterWithRecordingStatus[] = allChapters
@@ -77,6 +98,88 @@ export function AudioPlayer({
     }
   }, [chapter.id, recording.id, duration])
 
+  // Persist playback speed and chime preference
+  useEffect(() => {
+    localStorage.setItem('voorleesbibliotheek_playback_speed', String(playbackSpeed))
+  }, [playbackSpeed])
+
+  useEffect(() => {
+    localStorage.setItem('voorleesbibliotheek_chime_enabled', String(chimeEnabled))
+  }, [chimeEnabled])
+
+  // Cancel auto-play countdown
+  const cancelAutoPlay = useCallback(() => {
+    if (autoPlayTimerRef.current) {
+      clearInterval(autoPlayTimerRef.current)
+      autoPlayTimerRef.current = null
+    }
+    pendingNextRef.current = null
+    setAutoPlayCountdown(null)
+  }, [])
+
+  // Start auto-play countdown (5 seconds)
+  const startAutoPlayCountdown = useCallback((onNextFn: () => void) => {
+    cancelAutoPlay()
+    pendingNextRef.current = onNextFn
+    setAutoPlayCountdown(5)
+    autoPlayTimerRef.current = setInterval(() => {
+      setAutoPlayCountdown(prev => {
+        if (prev === null || prev <= 1) {
+          if (autoPlayTimerRef.current) clearInterval(autoPlayTimerRef.current)
+          autoPlayTimerRef.current = null
+          // Trigger next chapter
+          pendingNextRef.current?.()
+          pendingNextRef.current = null
+          return null
+        }
+        return prev - 1
+      })
+    }, 1000)
+  }, [cancelAutoPlay])
+
+  // Cleanup auto-play timer on unmount
+  useEffect(() => {
+    return () => {
+      if (autoPlayTimerRef.current) clearInterval(autoPlayTimerRef.current)
+    }
+  }, [])
+
+  // Media Session API for lockscreen controls
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return
+
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: chapter.title,
+      artist: reader.name,
+      album: book.title,
+      artwork: book.cover_url ? [
+        { src: book.cover_url, sizes: '256x256', type: 'image/jpeg' },
+        { src: book.cover_url, sizes: '512x512', type: 'image/jpeg' },
+      ] : [],
+    })
+
+    navigator.mediaSession.setActionHandler('play', () => {
+      audioRef.current?.play().then(() => setIsPlaying(true)).catch(() => {})
+    })
+    navigator.mediaSession.setActionHandler('pause', () => {
+      audioRef.current?.pause()
+      setIsPlaying(false)
+    })
+    navigator.mediaSession.setActionHandler('seekbackward', () => skipBackward())
+    navigator.mediaSession.setActionHandler('seekforward', () => skipForward())
+    navigator.mediaSession.setActionHandler('previoustrack', onPrevious || null)
+    navigator.mediaSession.setActionHandler('nexttrack', onNext || null)
+
+    return () => {
+      navigator.mediaSession.setActionHandler('play', null)
+      navigator.mediaSession.setActionHandler('pause', null)
+      navigator.mediaSession.setActionHandler('seekbackward', null)
+      navigator.mediaSession.setActionHandler('seekforward', null)
+      navigator.mediaSession.setActionHandler('previoustrack', null)
+      navigator.mediaSession.setActionHandler('nexttrack', null)
+    }
+  }, [chapter.title, reader.name, book.title, book.cover_url, onNext, onPrevious])
+
   // Track if we should auto-play when chapter changes
   useEffect(() => {
     if (isPlaying) {
@@ -84,21 +187,26 @@ export function AudioPlayer({
     }
   }, [isPlaying])
 
-  // Auto-play when recording changes
+  // Auto-play when recording changes (gesture-aware for iOS)
   useEffect(() => {
     if (previousRecordingIdRef.current !== recording.id) {
       if (wasPlayingRef.current && audioRef.current) {
         setIsLoading(true)
+        setAutoplayBlocked(false)
         audioRef.current.play().then(() => {
           setIsPlaying(true)
+          setAutoplayBlocked(false)
         }).catch(() => {
+          // iOS Safari blocks autoplay without user gesture
           setIsPlaying(false)
+          setAutoplayBlocked(true)
         })
       }
       previousRecordingIdRef.current = recording.id
       wasPlayingRef.current = false
       lastSaveRef.current = 0
-      setCurrentTime(0)
+      currentTimeRef.current = 0
+      setDisplayTime(0)
     }
   }, [recording.id])
 
@@ -108,7 +216,8 @@ export function AudioPlayer({
     if (savedProgress && savedProgress.recordingId === recording.id && !savedProgress.completed) {
       if (audioRef.current) {
         audioRef.current.currentTime = savedProgress.currentTime
-        setCurrentTime(savedProgress.currentTime)
+        currentTimeRef.current = savedProgress.currentTime
+        setDisplayTime(savedProgress.currentTime)
       }
     }
   }, [chapter.id, recording.id])
@@ -164,8 +273,18 @@ export function AudioPlayer({
     const audio = audioRef.current
     if (!audio) return
 
+    // Throttle timeupdate to ~4x/sec to avoid 60fps re-renders
     const handleTimeUpdate = () => {
-      setCurrentTime(audio.currentTime)
+      currentTimeRef.current = audio.currentTime
+      // Update progress bar via DOM for smooth animation without React re-renders
+      if (progressBarRef.current && duration > 0) {
+        progressBarRef.current.style.width = `${(audio.currentTime / duration) * 100}%`
+      }
+      const now = Date.now()
+      if (now - lastDisplayUpdateRef.current >= 250) {
+        lastDisplayUpdateRef.current = now
+        setDisplayTime(audio.currentTime)
+      }
       if (audio.currentTime - lastSaveRef.current >= 5) {
         saveProgress()
         lastSaveRef.current = audio.currentTime
@@ -179,7 +298,8 @@ export function AudioPlayer({
       const savedProgress = getChapterProgress(chapter.id)
       if (savedProgress && savedProgress.recordingId === recording.id && !savedProgress.completed) {
         audio.currentTime = savedProgress.currentTime
-        setCurrentTime(savedProgress.currentTime)
+        currentTimeRef.current = savedProgress.currentTime
+        setDisplayTime(savedProgress.currentTime)
       }
     }
     const handleEnded = () => {
@@ -188,11 +308,13 @@ export function AudioPlayer({
       // If sleep timer is "end of chapter", don't auto-play next
       if (sleepTimer === 'end_of_chapter') {
         setSleepTimer(null)
-        playChapterChime()
+        if (chimeEnabled) playChapterChime()
         return
       }
       if (onNext) {
-        playChapterChime().then(() => onNext())
+        if (chimeEnabled) playChapterChime()
+        // Show 5-second countdown before auto-playing next chapter
+        startAutoPlayCountdown(onNext)
       }
     }
     const handleWaiting = () => setIsBuffering(true)
@@ -222,16 +344,21 @@ export function AudioPlayer({
       audio.removeEventListener('canplay', handleCanPlay)
       audio.removeEventListener('error', handleError)
     }
-  }, [chapter.id, recording.id, saveProgress, sleepTimer, playbackSpeed])
+  }, [chapter.id, recording.id, saveProgress, sleepTimer, playbackSpeed, duration])
 
   const togglePlay = () => {
     if (!audioRef.current || hasError) return
     if (isPlaying) {
       audioRef.current.pause()
+      setIsPlaying(false)
     } else {
-      audioRef.current.play()
+      setAutoplayBlocked(false)
+      audioRef.current.play().then(() => {
+        setIsPlaying(true)
+      }).catch(() => {
+        setIsPlaying(false)
+      })
     }
-    setIsPlaying(!isPlaying)
   }
 
   const skipForward = () => {
@@ -251,19 +378,28 @@ export function AudioPlayer({
     audioRef.current.load()
   }
 
+  const seekTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const seek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const time = parseFloat(e.target.value)
-    if (audioRef.current) {
-      audioRef.current.currentTime = time
-      setCurrentTime(time)
+    currentTimeRef.current = time
+    setDisplayTime(time)
+    // Update progress bar immediately via DOM
+    if (progressBarRef.current && duration > 0) {
+      progressBarRef.current.style.width = `${(time / duration) * 100}%`
     }
+    // Debounce actual audio seek to avoid thrashing
+    if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current)
+    seekTimeoutRef.current = setTimeout(() => {
+      if (audioRef.current) {
+        audioRef.current.currentTime = time
+      }
+    }, 50)
   }
 
   const cycleSpeed = () => {
     const speeds: PlaybackSpeed[] = [0.75, 1, 1.25, 1.5, 2]
-    const currentIndex = speeds.indexOf(playbackSpeed)
-    const nextIndex = (currentIndex + 1) % speeds.length
-    setPlaybackSpeed(speeds[nextIndex])
+    const idx = speeds.indexOf(playbackSpeed)
+    setPlaybackSpeed(speeds[(idx + 1) % speeds.length])
   }
 
   const formatTime = (seconds: number) => {
@@ -279,7 +415,7 @@ export function AudioPlayer({
     return `${secs}s`
   }
 
-  const progress = duration > 0 ? (currentTime / duration) * 100 : 0
+  const progress = duration > 0 ? (displayTime / duration) * 100 : 0
 
   return (
     <AnimatePresence>
@@ -454,35 +590,58 @@ export function AudioPlayer({
             </div>
           )}
 
+          {/* Autoplay blocked - show tap to play (iOS Safari) */}
+          {autoplayBlocked && !isPlaying && !hasError && !isLoading && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mb-4 flex justify-center"
+            >
+              <button
+                onClick={togglePlay}
+                className="flex items-center gap-2 px-5 py-3 bg-sky text-white rounded-full font-medium shadow-soft hover:shadow-lifted transition-shadow"
+              >
+                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+                Tik om af te spelen
+              </button>
+            </motion.div>
+          )}
+
           {/* Progress bar */}
           <div className="mb-4 sm:mb-6">
             <div className="relative h-3 bg-cream-dark rounded-full overflow-hidden mb-2" aria-hidden="true">
-              <motion.div
-                className="absolute left-0 top-0 bottom-0 bg-gradient-to-r from-sky to-sky-light rounded-full"
+              <div
+                ref={progressBarRef}
+                className="absolute left-0 top-0 bottom-0 bg-gradient-to-r from-sky to-sky-light rounded-full transition-[width] duration-200 ease-linear"
                 style={{ width: `${progress}%` }}
               />
               <div className="absolute left-0 top-1/2 -translate-y-1/2 text-lg" aria-hidden="true">🌱</div>
-              <motion.div
+              <div
                 className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 text-2xl"
                 style={{ left: `${Math.max(5, Math.min(95, progress))}%` }}
                 aria-hidden="true"
               >
                 📖
-              </motion.div>
+              </div>
               <div className="absolute right-0 top-1/2 -translate-y-1/2 text-lg" aria-hidden="true">🏠</div>
             </div>
-            <input
-              type="range"
-              min={0}
-              max={duration || 100}
-              value={currentTime}
-              onChange={seek}
-              aria-label="Audio voortgang"
-              aria-valuetext={`${formatTime(currentTime)} van ${formatTime(duration)}`}
-              className="audio-seek-slider w-full h-2 rounded-full appearance-none cursor-pointer bg-cream-dark"
-            />
-            <div className="flex justify-between mt-2 text-sm text-cocoa-light" aria-live="polite" aria-atomic="true">
-              <span>{formatTime(currentTime)}</span>
+            {/* Enlarged seek slider with bigger touch area (min 48px) */}
+            <div className="py-2">
+              <input
+                type="range"
+                min={0}
+                max={duration || 100}
+                value={displayTime}
+                onChange={seek}
+                aria-label="Audio voortgang"
+                aria-valuetext={`${formatTime(displayTime)} van ${formatTime(duration)}`}
+                className="audio-seek-slider w-full rounded-full appearance-none cursor-pointer"
+              />
+            </div>
+            <div className="flex justify-between text-sm text-cocoa-light" aria-live="polite" aria-atomic="true">
+              <span>{formatTime(displayTime)}</span>
               <span aria-label={`Totale duur ${formatTime(duration)}`}>{formatTime(duration)}</span>
             </div>
             {isBuffering && (
@@ -578,6 +737,27 @@ export function AudioPlayer({
             </button>
           </div>
 
+          {/* Auto-play countdown overlay */}
+          {autoPlayCountdown !== null && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mb-3 flex items-center justify-center gap-3"
+            >
+              <div className="flex items-center gap-3 px-5 py-3 bg-sky-light/30 rounded-2xl">
+                <span className="text-sm text-cocoa">
+                  Volgend hoofdstuk in <span className="font-bold text-sky">{autoPlayCountdown}</span>s
+                </span>
+                <button
+                  onClick={cancelAutoPlay}
+                  className="px-3 py-1.5 bg-white rounded-full text-xs font-bold text-cocoa shadow-soft hover:shadow-lifted transition-shadow"
+                >
+                  Annuleer
+                </button>
+              </div>
+            </motion.div>
+          )}
+
           {/* Secondary controls row: speed + playback rate indicator */}
           <div className="flex items-center justify-center gap-4">
             <button
@@ -629,6 +809,27 @@ export function AudioPlayer({
                         </button>
                       ))}
                     </div>
+                  </div>
+
+                  {/* Chime toggle */}
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-sm font-medium text-cocoa">Hoofdstuk-geluidje</h4>
+                      <p className="text-xs text-cocoa-light mt-0.5">Belletje tussen hoofdstukken</p>
+                    </div>
+                    <button
+                      onClick={() => setChimeEnabled(!chimeEnabled)}
+                      className={`relative w-12 h-7 rounded-full transition-colors ${
+                        chimeEnabled ? 'bg-sky' : 'bg-cream-dark'
+                      }`}
+                      role="switch"
+                      aria-checked={chimeEnabled}
+                      aria-label="Hoofdstuk geluidje aan/uit"
+                    >
+                      <span className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full bg-white shadow-soft transition-transform ${
+                        chimeEnabled ? 'translate-x-5' : ''
+                      }`} />
+                    </button>
                   </div>
 
                   {/* Sleep timer */}

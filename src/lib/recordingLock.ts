@@ -19,8 +19,8 @@ export interface LockCheckResult {
   message?: string
 }
 
-// Lock duration: 30 minutes (should be enough for most recordings)
-const LOCK_DURATION_MS = 30 * 60 * 1000
+// Lock duration: 2 hours (long recordings + upload time)
+const LOCK_DURATION_MS = 2 * 60 * 60 * 1000
 
 // localStorage key for offline/local lock support
 const LOCAL_LOCKS_KEY = 'voorleesbibliotheek_recording_locks'

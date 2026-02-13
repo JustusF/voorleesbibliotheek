@@ -107,6 +107,32 @@ export function ListenPage() {
     )
   }, [books, searchQuery])
 
+  // Book progress stats for grid display
+  const bookProgressMap = useMemo(() => {
+    const map: Record<string, { listened: number; total: number; lastPlayed: string | null }> = {}
+    const allProgress = getProgress()
+    const allChapters = getChapters()
+
+    for (const book of books) {
+      const chapters = allChapters.filter(c => c.book_id === book.id)
+      let listenedCount = 0
+      let latestPlayed: string | null = null
+
+      for (const ch of chapters) {
+        const prog = allProgress[ch.id]
+        if (prog && (prog.completed || prog.currentTime > 5)) {
+          listenedCount++
+          if (prog.lastPlayed && (!latestPlayed || prog.lastPlayed > latestPlayed)) {
+            latestPlayed = prog.lastPlayed
+          }
+        }
+      }
+
+      map[book.id] = { listened: listenedCount, total: chapters.length, lastPlayed: latestPlayed }
+    }
+    return map
+  }, [books])
+
   // Get chapters with saved progress for "Verder luisteren" section
   const continueListening = useMemo(() => {
     const allProgress = getProgress()
@@ -133,12 +159,11 @@ export function ListenPage() {
       results.push({ book, chapter, recording: rec, reader, progress: prog })
     }
 
-    // Sort by most recently listened (highest currentTime relative to duration = most engaged)
+    // Sort by most recently listened (lastPlayed timestamp)
     return results.sort((a, b) => {
-      // Sort by how recently they were saved (items with higher currentTime are more recent listens)
-      const aPercent = a.progress.duration > 0 ? a.progress.currentTime / a.progress.duration : 0
-      const bPercent = b.progress.duration > 0 ? b.progress.currentTime / b.progress.duration : 0
-      return bPercent - aPercent
+      const aTime = a.progress.lastPlayed ? new Date(a.progress.lastPlayed).getTime() : 0
+      const bTime = b.progress.lastPlayed ? new Date(b.progress.lastPlayed).getTime() : 0
+      return bTime - aTime
     }).slice(0, 5)
   }, [books, users])
 
@@ -234,12 +259,16 @@ export function ListenPage() {
   const handleBack = () => {
     if (viewMode === 'player') {
       if (selected.reader && !selected.book) {
-        // Came from reader view
+        // Came from reader-recordings view
         setViewMode('reader-recordings')
         setSelected({ reader: selected.reader })
-      } else {
+      } else if (selected.book) {
         setViewMode('chapters')
         setSelected({ book: selected.book })
+      } else {
+        // Fallback if book is undefined
+        setViewMode('books')
+        setSelected({})
       }
     } else if (viewMode === 'chapters') {
       setViewMode('books')
@@ -249,8 +278,6 @@ export function ListenPage() {
       setSelected({})
     } else if (viewMode === 'books' || viewMode === 'readers') {
       handleSwitchListener()
-    } else if (viewMode === 'listener-select') {
-      navigate('/')
     } else {
       navigate('/')
     }
@@ -286,20 +313,19 @@ export function ListenPage() {
     if (!selected.chapter || !selected.book) return
     const playableChapters = getPlayableChapters()
     const currentIndex = playableChapters.findIndex(c => c.id === selected.chapter?.id)
-    if (currentIndex < playableChapters.length - 1) {
-      const nextChapter = playableChapters[currentIndex + 1]
-      const chapterData = getChapterWithRecordings(nextChapter.id)
-      if (chapterData && chapterData.recordings.length > 0) {
-        const recording = chapterData.recordings[0]
-        const reader = users.find(u => u.id === recording.reader_id)
-        if (reader) {
-          setSelected({
-            ...selected,
-            chapter: nextChapter,
-            recording,
-            reader,
-          })
-        }
+    if (currentIndex === -1 || currentIndex >= playableChapters.length - 1) return
+    const nextChapter = playableChapters[currentIndex + 1]
+    const chapterData = getChapterWithRecordings(nextChapter.id)
+    if (chapterData && chapterData.recordings.length > 0) {
+      const recording = chapterData.recordings[0]
+      const reader = users.find(u => u.id === recording.reader_id)
+      if (reader) {
+        setSelected({
+          ...selected,
+          chapter: nextChapter,
+          recording,
+          reader,
+        })
       }
     }
   }
@@ -308,20 +334,19 @@ export function ListenPage() {
     if (!selected.chapter || !selected.book) return
     const playableChapters = getPlayableChapters()
     const currentIndex = playableChapters.findIndex(c => c.id === selected.chapter?.id)
-    if (currentIndex > 0) {
-      const prevChapter = playableChapters[currentIndex - 1]
-      const chapterData = getChapterWithRecordings(prevChapter.id)
-      if (chapterData && chapterData.recordings.length > 0) {
-        const recording = chapterData.recordings[0]
-        const reader = users.find(u => u.id === recording.reader_id)
-        if (reader) {
-          setSelected({
-            ...selected,
-            chapter: prevChapter,
-            recording,
-            reader,
-          })
-        }
+    if (currentIndex <= 0) return
+    const prevChapter = playableChapters[currentIndex - 1]
+    const chapterData = getChapterWithRecordings(prevChapter.id)
+    if (chapterData && chapterData.recordings.length > 0) {
+      const recording = chapterData.recordings[0]
+      const reader = users.find(u => u.id === recording.reader_id)
+      if (reader) {
+        setSelected({
+          ...selected,
+          chapter: prevChapter,
+          recording,
+          reader,
+        })
       }
     }
   }
@@ -331,6 +356,7 @@ export function ListenPage() {
     if (!selected.chapter) return { canNext: false, canPrevious: false }
     const playableChapters = getPlayableChapters()
     const currentIndex = playableChapters.findIndex(c => c.id === selected.chapter?.id)
+    if (currentIndex === -1) return { canNext: false, canPrevious: false }
     return {
       canNext: currentIndex < playableChapters.length - 1,
       canPrevious: currentIndex > 0,
@@ -605,23 +631,61 @@ export function ListenPage() {
               animate="visible"
               className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4 md:gap-6"
             >
-              {filteredBooks.map((book) => (
-                <motion.div key={book.id} variants={itemVariants}>
-                  <BookCover
-                    book={book}
-                    size="lg"
-                    onClick={() => handleBookSelect(book)}
-                  />
-                  <p className="mt-2 text-center font-display text-sm sm:text-base text-cocoa line-clamp-2">
-                    {book.title}
-                  </p>
-                  {book.author && (
-                    <p className="text-center text-xs sm:text-sm text-cocoa-light line-clamp-1">
-                      {book.author}
+              {filteredBooks.map((book) => {
+                const bookProg = bookProgressMap[book.id]
+                const hasProgress = bookProg && bookProg.listened > 0
+                const progressPercent = bookProg && bookProg.total > 0
+                  ? Math.round((bookProg.listened / bookProg.total) * 100)
+                  : 0
+
+                // Format relative date
+                const formatLastPlayed = (iso: string | null) => {
+                  if (!iso) return null
+                  const diff = Date.now() - new Date(iso).getTime()
+                  const days = Math.floor(diff / 86400000)
+                  if (days === 0) return 'Vandaag'
+                  if (days === 1) return 'Gisteren'
+                  if (days < 7) return `${days} dagen geleden`
+                  return `${Math.floor(days / 7)}w geleden`
+                }
+
+                return (
+                  <motion.div key={book.id} variants={itemVariants}>
+                    <div className="relative">
+                      <BookCover
+                        book={book}
+                        size="lg"
+                        onClick={() => handleBookSelect(book)}
+                      />
+                      {/* Progress indicator overlay on cover */}
+                      {hasProgress && (
+                        <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-cream-dark/60 rounded-b-lg overflow-hidden">
+                          <div
+                            className="h-full bg-sky rounded-full transition-all"
+                            style={{ width: `${progressPercent}%` }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                    <p className="mt-2 text-center font-display text-sm sm:text-base text-cocoa line-clamp-2">
+                      {book.title}
                     </p>
-                  )}
-                </motion.div>
-              ))}
+                    {book.author && (
+                      <p className="text-center text-xs sm:text-sm text-cocoa-light line-clamp-1">
+                        {book.author}
+                      </p>
+                    )}
+                    {hasProgress && bookProg.total > 0 && (
+                      <p className="text-center text-[10px] text-cocoa-light mt-0.5">
+                        H{bookProg.listened}/{bookProg.total}
+                        {bookProg.lastPlayed && (
+                          <span className="ml-1 text-sky">{formatLastPlayed(bookProg.lastPlayed)}</span>
+                        )}
+                      </p>
+                    )}
+                  </motion.div>
+                )
+              })}
             </motion.div>
           )}
         </>

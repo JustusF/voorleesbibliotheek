@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useReducer } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import { Button, CloudDecoration, Avatar, Card, ConfirmDialog } from '../components/ui'
@@ -14,17 +14,78 @@ type Step = 'reader' | 'book' | 'chapter' | 'record' | 'success'
 type RecordMode = 'record' | 'upload' | null
 type BookMode = 'select' | 'new'
 
+// Wizard state managed by useReducer
+interface WizardState {
+  step: Step
+  selectedReader: User | null
+  selectedBook: Book | null
+  currentChapter: Chapter | null
+  recordMode: RecordMode
+  bookMode: BookMode
+}
+
+type WizardAction =
+  | { type: 'SELECT_READER'; reader: User }
+  | { type: 'SELECT_BOOK'; book: Book }
+  | { type: 'SET_CHAPTER'; chapter: Chapter }
+  | { type: 'SET_RECORD_MODE'; mode: RecordMode }
+  | { type: 'SET_BOOK_MODE'; mode: BookMode }
+  | { type: 'SET_STEP'; step: Step }
+  | { type: 'BACK_TO_READER' }
+  | { type: 'BACK_TO_BOOK' }
+  | { type: 'BACK_TO_CHAPTER' }
+  | { type: 'BACK_TO_RECORD' }
+  | { type: 'RESET_FOR_NEW_BOOK' }
+  | { type: 'RESET_FOR_ANOTHER_CHAPTER' }
+
+const initialWizardState: WizardState = {
+  step: 'reader',
+  selectedReader: null,
+  selectedBook: null,
+  currentChapter: null,
+  recordMode: null,
+  bookMode: 'select',
+}
+
+function wizardReducer(state: WizardState, action: WizardAction): WizardState {
+  switch (action.type) {
+    case 'SELECT_READER':
+      return { ...state, step: 'book', selectedReader: action.reader }
+    case 'SELECT_BOOK':
+      return { ...state, step: 'chapter', selectedBook: action.book, bookMode: 'select' }
+    case 'SET_CHAPTER':
+      return { ...state, currentChapter: action.chapter }
+    case 'SET_RECORD_MODE':
+      return { ...state, recordMode: action.mode }
+    case 'SET_BOOK_MODE':
+      return { ...state, bookMode: action.mode }
+    case 'SET_STEP':
+      return { ...state, step: action.step }
+    case 'BACK_TO_READER':
+      return { ...state, step: 'reader', selectedReader: null }
+    case 'BACK_TO_BOOK':
+      return { ...state, step: 'book', selectedBook: null }
+    case 'BACK_TO_CHAPTER':
+      return { ...state, step: 'chapter', currentChapter: null }
+    case 'BACK_TO_RECORD':
+      return { ...state, step: 'record', recordMode: null }
+    case 'RESET_FOR_NEW_BOOK':
+      return { ...state, step: 'book', selectedBook: null, currentChapter: null, recordMode: null }
+    case 'RESET_FOR_ANOTHER_CHAPTER':
+      return { ...state, step: 'chapter', currentChapter: null, recordMode: null }
+    default:
+      return state
+  }
+}
+
 export function ReadPage() {
   const navigate = useNavigate()
-  const [step, setStep] = useState<Step>('reader')
+  const [wizard, dispatch] = useReducer(wizardReducer, initialWizardState)
+  const { step, selectedReader, selectedBook, currentChapter, recordMode, bookMode } = wizard
+
   const [books, setBooks] = useState<Book[]>([])
   const [users, setUsers] = useState<User[]>([])
-  const [selectedReader, setSelectedReader] = useState<User | null>(null)
-  const [selectedBook, setSelectedBook] = useState<Book | null>(null)
-  const [recordMode, setRecordMode] = useState<RecordMode>(null)
-  const [bookMode, setBookMode] = useState<BookMode>('select')
   const [newBookTitle, setNewBookTitle] = useState('')
-  const [currentChapter, setCurrentChapter] = useState<Chapter | null>(null)
   const [bookChapters, setBookChapters] = useState<Chapter[]>([])
 
   // Overwrite confirmation state
@@ -46,7 +107,8 @@ export function ReadPage() {
   const [uploadState, setUploadState] = useState<{
     isUploading: boolean
     error: string | null
-  }>({ isUploading: false, error: null })
+    progress: number
+  }>({ isUploading: false, error: null, progress: 0 })
 
   // Storage check state
   const [storageCheck, setStorageCheck] = useState<StorageCheckResult | null>(null)
@@ -62,18 +124,14 @@ export function ReadPage() {
   }, [])
 
   const handleReaderSelect = (reader: User) => {
-    setSelectedReader(reader)
     setReaderRecordings(getRecordingsForReader(reader.id))
-    setStep('book')
+    dispatch({ type: 'SELECT_READER', reader })
   }
 
   const handleBookSelect = (book: Book) => {
-    setSelectedBook(book)
-    setBookMode('select')
-    // Load chapters and go to chapter selection
     const chapters = getChaptersForBook(book.id)
     setBookChapters(chapters)
-    setStep('chapter')
+    dispatch({ type: 'SELECT_BOOK', book })
   }
 
   const handleChapterSelect = async (chapter: Chapter) => {
@@ -87,6 +145,9 @@ export function ReadPage() {
       return
     }
 
+    // Acquire lock early (before overwrite dialog) to prevent race conditions
+    await acquireLock(chapter.id, selectedReader.id, selectedReader.name)
+
     // Check if chapter already has recordings
     const existingRecordings = getRecordingsForChapter(chapter.id)
     if (existingRecordings.length > 0) {
@@ -95,14 +156,14 @@ export function ReadPage() {
       setShowOverwriteConfirm(true)
     } else {
       // No existing recordings, check storage and proceed
-      setCurrentChapter(chapter)
+      dispatch({ type: 'SET_CHAPTER', chapter })
       await checkStorageAndProceed()
     }
   }
 
   const handleConfirmOverwrite = async () => {
     if (pendingChapter) {
-      setCurrentChapter(pendingChapter)
+      dispatch({ type: 'SET_CHAPTER', chapter: pendingChapter })
       setPendingChapter(null)
       // Check storage before going to record step
       await checkStorageAndProceed()
@@ -117,7 +178,7 @@ export function ReadPage() {
       const result = await checkAvailableStorage()
       setStorageCheck(result)
       if (result.canRecord) {
-        setStep('record')
+        dispatch({ type: 'SET_STEP', step: 'record' })
       }
       // If can't record, the UI will show the warning
     } finally {
@@ -125,13 +186,10 @@ export function ReadPage() {
     }
   }
 
-  // Acquire lock when starting actual recording
-  const handleStartRecording = async (mode: 'record' | 'upload') => {
+  // Start recording or upload (lock already acquired in handleChapterSelect)
+  const handleStartRecording = (mode: 'record' | 'upload') => {
     if (!currentChapter || !selectedReader) return
-
-    // Acquire lock before starting
-    await acquireLock(currentChapter.id, selectedReader.id, selectedReader.name)
-    setRecordMode(mode)
+    dispatch({ type: 'SET_RECORD_MODE', mode })
   }
 
   // Release lock when canceling
@@ -139,10 +197,14 @@ export function ReadPage() {
     if (currentChapter && selectedReader) {
       await releaseLock(currentChapter.id, selectedReader.id)
     }
-    setRecordMode(null)
+    dispatch({ type: 'SET_RECORD_MODE', mode: null })
   }
 
-  const handleCancelOverwrite = () => {
+  const handleCancelOverwrite = async () => {
+    // Release lock since user cancelled the overwrite
+    if (pendingChapter && selectedReader) {
+      await releaseLock(pendingChapter.id, selectedReader.id)
+    }
     setPendingChapter(null)
     setShowOverwriteConfirm(false)
   }
@@ -172,7 +234,7 @@ export function ReadPage() {
   const handleNewChapter = async () => {
     if (!selectedBook) return
     const chapter = getOrCreateNextChapter(selectedBook.id)
-    setCurrentChapter(chapter)
+    dispatch({ type: 'SET_CHAPTER', chapter })
     setBookChapters(getChaptersForBook(selectedBook.id))
     // Check storage before going to record step
     await checkStorageAndProceed()
@@ -187,7 +249,7 @@ export function ReadPage() {
     // Refresh books list and select the new book
     setBooks(getBooks())
     setNewBookTitle('')
-    setBookMode('select')
+    dispatch({ type: 'SET_BOOK_MODE', mode: 'select' })
     handleBookSelect(book)
   }
 
@@ -205,7 +267,7 @@ export function ReadPage() {
       // Release the lock after successful save
       await releaseLock(currentChapter.id, selectedReader.id)
       setSaveError(null)
-      setStep('success')
+      dispatch({ type: 'SET_STEP', step: 'success' })
     } catch (error) {
       console.error('Fout bij opslaan opname:', error)
       setSaveError('Er ging iets mis bij het opslaan van je opname. Probeer het opnieuw.')
@@ -216,7 +278,7 @@ export function ReadPage() {
     if (!currentChapter || !selectedReader) return
 
     // Reset upload state
-    setUploadState({ isUploading: true, error: null })
+    setUploadState({ isUploading: true, error: null, progress: 0 })
 
     try {
       // Use shared upload utility with validation and duration detection
@@ -226,58 +288,57 @@ export function ReadPage() {
         selectedReader.id,
         {
           maxSizeBytes: 50 * 1024 * 1024, // 50MB
-        }
+        },
+        (progress) => setUploadState(prev => ({ ...prev, progress }))
       )
 
       if (!result.success) {
         // Handle validation/upload errors
         setUploadState({
           isUploading: false,
-          error: result.message
+          error: result.message,
+          progress: 0,
         })
         return
       }
 
       // Success - refresh recordings and proceed
       setReaderRecordings(getRecordingsForReader(selectedReader.id))
-      setUploadState({ isUploading: false, error: null })
+      setUploadState({ isUploading: false, error: null, progress: 0 })
       // Release the lock after successful upload
       await releaseLock(currentChapter.id, selectedReader.id)
 
       // Brief delay before showing success to let user see the uploaded file
-      setTimeout(() => setStep('success'), 500)
+      setTimeout(() => dispatch({ type: 'SET_STEP', step: 'success' }), 500)
 
     } catch (error) {
       console.error('Unexpected upload error:', error)
       setUploadState({
         isUploading: false,
-        error: 'Er ging iets mis bij het uploaden. Probeer het opnieuw.'
+        error: 'Er ging iets mis bij het uploaden. Probeer het opnieuw.',
+        progress: 0,
       })
     }
   }
 
   const handleBack = () => {
     if (step === 'success') {
-      setStep('record')
-      setRecordMode(null)
+      dispatch({ type: 'BACK_TO_RECORD' })
     } else if (step === 'record') {
       if (recordMode) {
-        setRecordMode(null)
+        dispatch({ type: 'SET_RECORD_MODE', mode: null })
       } else {
-        setStep('chapter')
-        setCurrentChapter(null)
+        dispatch({ type: 'BACK_TO_CHAPTER' })
       }
     } else if (step === 'chapter') {
-      setStep('book')
-      setSelectedBook(null)
       setBookChapters([])
+      dispatch({ type: 'BACK_TO_BOOK' })
     } else if (step === 'book') {
       if (bookMode === 'new') {
-        setBookMode('select')
+        dispatch({ type: 'SET_BOOK_MODE', mode: 'select' })
         setNewBookTitle('')
       } else {
-        setStep('reader')
-        setSelectedReader(null)
+        dispatch({ type: 'BACK_TO_READER' })
       }
     } else {
       navigate('/')
@@ -288,17 +349,12 @@ export function ReadPage() {
   const handleAnotherChapter = () => {
     if (!selectedBook) return
     setBookChapters(getChaptersForBook(selectedBook.id))
-    setCurrentChapter(null)
-    setRecordMode(null)
-    setStep('chapter')
+    dispatch({ type: 'RESET_FOR_ANOTHER_CHAPTER' })
   }
 
   // Start fresh with different book
   const handleNewRecording = () => {
-    setStep('book')
-    setSelectedBook(null)
-    setCurrentChapter(null)
-    setRecordMode(null)
+    dispatch({ type: 'RESET_FOR_NEW_BOOK' })
   }
 
   const getStepIndex = (s: Step): number => {
@@ -476,7 +532,7 @@ export function ReadPage() {
               <motion.button
                 whileHover={{ scale: 1.02, x: 4 }}
                 whileTap={{ scale: 0.98 }}
-                onClick={() => setBookMode('new')}
+                onClick={() => dispatch({ type: 'SET_BOOK_MODE', mode: 'new' })}
                 className="w-full p-5 bg-gradient-to-r from-honey to-honey-dark rounded-[20px] shadow-soft hover:shadow-lifted text-left flex items-center gap-4 transition-shadow"
               >
                 <div className="w-12 h-12 rounded-[12px] bg-white/30 flex items-center justify-center text-2xl">
@@ -552,7 +608,7 @@ export function ReadPage() {
                   <Button
                     variant="ghost"
                     onClick={() => {
-                      setBookMode('select')
+                      dispatch({ type: 'SET_BOOK_MODE', mode: 'select' })
                       setNewBookTitle('')
                     }}
                     className="flex-1"
@@ -871,6 +927,7 @@ export function ReadPage() {
               onFileSelect={handleFileUpload}
               isUploading={uploadState.isUploading}
               uploadError={uploadState.error}
+              uploadProgress={uploadState.progress}
             />
           </motion.div>
         )}

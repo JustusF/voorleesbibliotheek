@@ -108,6 +108,87 @@ button, a, [role="button"] {
   }
 }
 
+/* Reduced motion: disable all animations */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-cream: #1a1510;
+    --color-cream-dark: #2a2218;
+    --color-cocoa: #e8dcc8;
+    --color-cocoa-light: #b8a88e;
+    --color-honey: #F5A623;
+    --color-honey-light: #c48a1e;
+    --color-honey-dark: #ffc44d;
+    --color-sunset: #ff7a6b;
+    --color-sunset-light: #ff9d92;
+    --color-sky: #7EC8E3;
+    --color-sky-light: #5aadcc;
+    --color-moss: #7aaa7a;
+    --color-lavender: #9b8bb0;
+    --color-night: #e8e4f0;
+    --color-gold: #e8c44a;
+  }
+
+  html {
+    background-color: #1a1510;
+    color: #e8dcc8;
+  }
+
+  body {
+    background:
+      radial-gradient(ellipse at 10% 10%, rgba(245, 166, 35, 0.06) 0%, transparent 40%),
+      radial-gradient(ellipse at 90% 20%, rgba(155, 139, 176, 0.05) 0%, transparent 35%),
+      radial-gradient(ellipse at 80% 85%, rgba(126, 200, 227, 0.05) 0%, transparent 40%),
+      #1a1510;
+  }
+
+  body::before {
+    opacity: 0.015;
+  }
+
+  /* Dark mode overrides for white backgrounds */
+  .bg-white {
+    background-color: #2a2218 !important;
+  }
+
+  .bg-white\/60 {
+    background-color: rgba(42, 34, 24, 0.6) !important;
+  }
+
+  .bg-white\/80 {
+    background-color: rgba(42, 34, 24, 0.8) !important;
+  }
+
+  .bg-white\/95 {
+    background-color: rgba(42, 34, 24, 0.95) !important;
+  }
+
+  .text-white {
+    color: #f5f0e8;
+  }
+
+  /* Softer shadows in dark mode */
+  .shadow-soft {
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  }
+
+  .shadow-lifted {
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+  }
+
+  .shadow-floating {
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  }
+}
+
 /* Animation keyframes */
 @keyframes float {
   0%, 100% { transform: translateY(0); }
@@ -145,21 +226,22 @@ button, a, [role="button"] {
   animation: bounce-soft 2s ease-in-out infinite;
 }
 
-/* Audio seek slider styling */
+/* Audio seek slider styling - enlarged for mobile touch (min 48px hit zone) */
 .audio-seek-slider {
   -webkit-appearance: none;
   appearance: none;
   background: var(--color-cream-dark);
   border-radius: 9999px;
-  height: 8px;
+  height: 12px;
   cursor: pointer;
+  touch-action: none;
 }
 
 .audio-seek-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: var(--color-sky);
   border: 3px solid white;
@@ -169,17 +251,18 @@ button, a, [role="button"] {
 }
 
 .audio-seek-slider::-webkit-slider-thumb:hover {
-  transform: scale(1.15);
+  transform: scale(1.2);
   box-shadow: 0 4px 12px rgba(93, 78, 55, 0.25);
 }
 
 .audio-seek-slider::-webkit-slider-thumb:active {
-  transform: scale(1.1);
+  transform: scale(1.15);
+  background: var(--color-sky-light);
 }
 
 .audio-seek-slider::-moz-range-thumb {
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: var(--color-sky);
   border: 3px solid white;
@@ -189,13 +272,13 @@ button, a, [role="button"] {
 }
 
 .audio-seek-slider::-moz-range-thumb:hover {
-  transform: scale(1.15);
+  transform: scale(1.2);
 }
 
 .audio-seek-slider::-moz-range-track {
   background: var(--color-cream-dark);
   border-radius: 9999px;
-  height: 8px;
+  height: 12px;
 }
 
 .audio-seek-slider:focus-visible {
