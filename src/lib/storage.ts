@@ -639,11 +639,20 @@ export async function addRecordingAsync(
 
   // If audioData is a Blob and any storage backend is configured, upload to storage
   if (audioData instanceof Blob && isAnyStorageConfigured()) {
-    const uploadedUrl = await uploadAudioToStorage(audioData, recordingId)
+    let uploadedUrl = await uploadAudioToStorage(audioData, recordingId)
+    // Retry once if first upload fails
+    if (!uploadedUrl) {
+      console.warn('[addRecordingAsync] First upload failed, retrying...')
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+      uploadedUrl = await uploadAudioToStorage(audioData, recordingId)
+    }
     if (uploadedUrl) {
       audioUrl = uploadedUrl
+    } else if (audioData.size > 4 * 1024 * 1024) {
+      // >4MB won't fit in localStorage, throw instead of silent failure
+      throw new Error('Upload mislukt en opname is te groot voor lokale opslag. Probeer het opnieuw.')
     } else {
-      // Fallback to base64 if upload fails
+      // Small enough for base64 fallback
       audioUrl = await new Promise<string>((resolve) => {
         const reader = new FileReader()
         reader.onloadend = () => resolve(reader.result as string)
@@ -672,7 +681,10 @@ export async function addRecordingAsync(
 
   if (isSupabaseConfigured && supabase) {
     const { error } = await supabase.from('recordings').insert(newRecording)
-    if (error) console.error('Error adding recording to Supabase:', error)
+    if (error) {
+      console.error('Error adding recording to Supabase:', error)
+      throw new Error(`Opname opslaan mislukt: ${error.message}`)
+    }
   }
 
   const recordings = loadFromStorage<Recording[]>(STORAGE_KEYS.recordings, [])

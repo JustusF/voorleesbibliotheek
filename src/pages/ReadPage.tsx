@@ -1,4 +1,4 @@
-import { useState, useEffect, useReducer } from 'react'
+import { useState, useEffect, useReducer, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import { Button, CloudDecoration, Avatar, Card, ConfirmDialog } from '../components/ui'
@@ -100,6 +100,12 @@ export function ReadPage() {
   const [showDashboard, setShowDashboard] = useState(false)
   const [readerRecordings, setReaderRecordings] = useState<Recording[]>([])
 
+  // Saving progress state
+  const [isSaving, setIsSaving] = useState(false)
+
+  // New book author state
+  const [newBookAuthor, setNewBookAuthor] = useState('')
+
   // Save error state
   const [saveError, setSaveError] = useState<string | null>(null)
 
@@ -122,6 +128,20 @@ export function ReadPage() {
     setBooks(getBooks())
     setUsers(getUsers())
   }, [])
+
+  // Prevent closing tab while saving
+  const handleBeforeUnload = useCallback((e: BeforeUnloadEvent) => {
+    e.preventDefault()
+  }, [])
+
+  useEffect(() => {
+    if (isSaving) {
+      window.addEventListener('beforeunload', handleBeforeUnload)
+    } else {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+    }
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [isSaving, handleBeforeUnload])
 
   const handleReaderSelect = (reader: User) => {
     setReaderRecordings(getRecordingsForReader(reader.id))
@@ -243,12 +263,13 @@ export function ReadPage() {
   const handleCreateBook = () => {
     if (!newBookTitle.trim()) return
 
-    // Create the book (no chapters needed upfront)
-    const book = addBook(newBookTitle.trim())
+    // Create the book with optional author
+    const book = addBook(newBookTitle.trim(), newBookAuthor.trim() || undefined)
 
     // Refresh books list and select the new book
     setBooks(getBooks())
     setNewBookTitle('')
+    setNewBookAuthor('')
     dispatch({ type: 'SET_BOOK_MODE', mode: 'select' })
     handleBookSelect(book)
   }
@@ -256,6 +277,7 @@ export function ReadPage() {
   const handleRecordingComplete = async (blob: Blob, duration: number) => {
     if (!currentChapter || !selectedReader) return
 
+    setIsSaving(true)
     try {
       // Directly upload the blob to storage backend (R2 or Supabase)
       // This is much more efficient than converting to base64 first,
@@ -271,6 +293,8 @@ export function ReadPage() {
     } catch (error) {
       console.error('Fout bij opslaan opname:', error)
       setSaveError('Er ging iets mis bij het opslaan van je opname. Probeer het opnieuw.')
+    } finally {
+      setIsSaving(false)
     }
   }
 
@@ -337,6 +361,7 @@ export function ReadPage() {
       if (bookMode === 'new') {
         dispatch({ type: 'SET_BOOK_MODE', mode: 'select' })
         setNewBookTitle('')
+        setNewBookAuthor('')
       } else {
         dispatch({ type: 'BACK_TO_READER' })
       }
@@ -556,8 +581,13 @@ export function ReadPage() {
                   <div className="w-12 h-12 rounded-[12px] bg-honey-light flex items-center justify-center text-2xl">
                     📖
                   </div>
-                  <span className="font-display text-xl text-cocoa">{book.title}</span>
-                  <svg className="w-6 h-6 text-cocoa-light ml-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <div className="flex-1 min-w-0">
+                    <span className="font-display text-xl text-cocoa block">{book.title}</span>
+                    {book.author && (
+                      <span className="text-sm text-cocoa-light">{book.author}</span>
+                    )}
+                  </div>
+                  <svg className="w-6 h-6 text-cocoa-light ml-auto flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                   </svg>
                 </motion.button>
@@ -604,12 +634,31 @@ export function ReadPage() {
                   />
                 </div>
 
+                <div>
+                  <label className="block text-sm font-medium text-cocoa mb-2">
+                    Auteur (optioneel)
+                  </label>
+                  <input
+                    type="text"
+                    value={newBookAuthor}
+                    onChange={(e) => setNewBookAuthor(e.target.value)}
+                    placeholder="Bijv. Max Velthuijs"
+                    className="w-full px-4 py-3 rounded-xl border-2 border-cream-dark focus:border-honey focus:outline-none transition-colors"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && newBookTitle.trim()) {
+                        handleCreateBook()
+                      }
+                    }}
+                  />
+                </div>
+
                 <div className="flex gap-3 pt-2">
                   <Button
                     variant="ghost"
                     onClick={() => {
                       dispatch({ type: 'SET_BOOK_MODE', mode: 'select' })
                       setNewBookTitle('')
+                      setNewBookAuthor('')
                     }}
                     className="flex-1"
                   >
@@ -887,6 +936,7 @@ export function ReadPage() {
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
+            className="relative"
           >
             {saveError && (
               <motion.div
@@ -912,6 +962,26 @@ export function ReadPage() {
               onRecordingComplete={handleRecordingComplete}
               onCancel={handleCancelRecording}
             />
+
+            {/* Saving overlay */}
+            <AnimatePresence>
+              {isSaving && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="absolute inset-0 bg-white/80 backdrop-blur-sm rounded-[32px] flex flex-col items-center justify-center z-50"
+                >
+                  <motion.div
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 1.2, repeat: Infinity, ease: 'linear' }}
+                    className="w-12 h-12 border-4 border-honey border-t-transparent rounded-full mb-4"
+                  />
+                  <p className="font-display text-xl text-cocoa">Opname opslaan...</p>
+                  <p className="text-cocoa-light text-sm mt-2">Even geduld, sluit dit scherm niet</p>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </motion.div>
         )}
 

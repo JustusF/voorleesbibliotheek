@@ -36,12 +36,13 @@ export class R2StorageBackend implements AudioStorageBackend {
     }
 
     const fileName = `${recordingId}.webm`
+    const contentType = audioBlob.type || 'audio/webm'
 
     try {
       const response = await fetch(`${this.workerUrl}/upload/${fileName}`, {
         method: 'PUT',
         headers: {
-          'Content-Type': 'audio/webm',
+          'Content-Type': contentType,
         },
         body: audioBlob,
       })
