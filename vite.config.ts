@@ -32,14 +32,16 @@ export default defineConfig({
             },
           },
           {
-            // Cache Supabase API calls (auth, data)
+            // Supabase API calls: NetworkFirst so cross-device sync always works.
+            // Falls back to cache only when truly offline.
             urlPattern: /^https:\/\/.*\.supabase\.co\/rest\/v1\/.*/i,
-            handler: 'StaleWhileRevalidate',
+            handler: 'NetworkFirst',
             options: {
               cacheName: 'api-cache',
+              networkTimeoutSeconds: 5,
               expiration: {
                 maxEntries: 50,
-                maxAgeSeconds: 5 * 60, // 5 minutes
+                maxAgeSeconds: 60, // 1 minute - stale data should expire fast
               },
               cacheableResponse: {
                 statuses: [0, 200],

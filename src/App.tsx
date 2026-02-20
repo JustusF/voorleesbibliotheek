@@ -5,6 +5,7 @@ import { HomePage } from './pages/HomePage'
 import { AppProvider, useSyncStatus } from './context/AppContext'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { StorageWarning } from './components/StorageWarning'
+import { RealtimeNotifier } from './components/RealtimeNotifier'
 import { ToastProvider } from './components/ui'
 
 // Lazy-load pages that aren't immediately needed
@@ -102,6 +103,7 @@ function AppContent() {
         </Routes>
       </Suspense>
       <SyncIndicator status={syncStatus} isOnline={isOnline} />
+      <RealtimeNotifier />
     </>
   )
 }
