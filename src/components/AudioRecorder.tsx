@@ -1,13 +1,21 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from './ui'
+import {
+  startBackupSession,
+  saveChunkToBackup,
+  getRecoverableRecording,
+  clearBackup,
+  requestWakeLock,
+  releaseWakeLock,
+} from '../lib/recordingBackup'
 
 interface AudioRecorderProps {
   onRecordingComplete: (blob: Blob, duration: number) => void
   onCancel: () => void
 }
 
-type RecordingState = 'idle' | 'requesting_permission' | 'permission_denied' | 'mic_test' | 'recording' | 'paused' | 'recorded' | 'playing'
+type RecordingState = 'idle' | 'requesting_permission' | 'permission_denied' | 'recording' | 'paused' | 'recorded' | 'playing'
 
 export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderProps) {
   const [state, setState] = useState<RecordingState>('idle')
@@ -15,8 +23,14 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
   const [permissionError, setPermissionError] = useState<string | null>(null)
 
+  // Recovery state for interrupted recordings
+  const [recoveredBlob, setRecoveredBlob] = useState<Blob | null>(null)
+  const [recoveredDuration, setRecoveredDuration] = useState(0)
+  const [showRecovery, setShowRecovery] = useState(false)
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
+  const chunkIndexRef = useRef(0)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const blobRef = useRef<Blob | null>(null)
@@ -24,9 +38,10 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
   const animationRef = useRef<number | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null)
+  const sessionIdRef = useRef<string>('')
   const [audioLevels, setAudioLevels] = useState<number[]>(Array(20).fill(0))
   const [showRecordingFlash, setShowRecordingFlash] = useState(false)
-  const [micTestPeak, setMicTestPeak] = useState(0)
 
   // Check if microphone is available
   useEffect(() => {
@@ -44,11 +59,67 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
     checkMicrophonePermission()
   }, [])
 
-  // Request mic permission and start mic test
-  const startMicTest = useCallback(async () => {
+  // Check for recoverable recording on mount
+  useEffect(() => {
+    const checkRecovery = async () => {
+      const recovered = await getRecoverableRecording()
+      if (recovered && recovered.chunks.length > 0) {
+        const blob = new Blob(recovered.chunks, { type: recovered.meta.mimeType })
+        // Estimate duration from chunk count (each chunk is ~10 seconds)
+        const estimatedDuration = recovered.chunks.length * 10
+        setRecoveredBlob(blob)
+        setRecoveredDuration(estimatedDuration)
+        setShowRecovery(true)
+      }
+    }
+    checkRecovery()
+  }, [])
+
+  // Cleanup on unmount to prevent dangling mic/recorder
+  useEffect(() => {
+    return () => {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop()
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop())
+      }
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current)
+      }
+      if (timerRef.current) {
+        clearInterval(timerRef.current)
+      }
+      if (audioContextRef.current) {
+        audioContextRef.current.close().catch(() => {})
+      }
+      releaseWakeLock(wakeLockRef.current)
+    }
+  }, [])
+
+  // Handle recovery: use the recovered recording
+  const handleRecoverRecording = useCallback(() => {
+    if (!recoveredBlob) return
+    blobRef.current = recoveredBlob
+    const url = URL.createObjectURL(recoveredBlob)
+    setAudioUrl(url)
+    setDuration(recoveredDuration)
+    setShowRecovery(false)
+    setState('recorded')
+    clearBackup()
+  }, [recoveredBlob, recoveredDuration])
+
+  // Handle recovery: discard and start fresh
+  const handleDiscardRecovery = useCallback(() => {
+    setRecoveredBlob(null)
+    setShowRecovery(false)
+    clearBackup()
+  }, [])
+
+  // Request mic permission and start recording immediately (no mic test step)
+  const startRecording = useCallback(async () => {
     setState('requesting_permission')
     setPermissionError(null)
-    setMicTestPeak(0)
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -58,18 +129,53 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
           autoGainControl: true,
         }
       })
+      // Keep original stream reference for cleanup
       streamRef.current = stream
 
-      // Setup audio analyser for waveform visualization
+      // Request wake lock to prevent screen sleep during recording
+      wakeLockRef.current = await requestWakeLock()
+
+      // Set up audio processing chain for louder recordings
       const audioContext = new AudioContext()
       audioContextRef.current = audioContext
       const source = audioContext.createMediaStreamSource(stream)
+
+      // Analyser for waveform visualization (connected directly to mic for accurate display)
       const analyser = audioContext.createAnalyser()
       analyser.fftSize = 64
-      source.connect(analyser)
       analyserRef.current = analyser
+      source.connect(analyser)
 
-      // Start animation loop for audio levels (mic test)
+      // Compressor to even out dynamics (makes quiet parts louder, loud parts softer)
+      const compressor = audioContext.createDynamicsCompressor()
+      compressor.threshold.setValueAtTime(-45, audioContext.currentTime)
+      compressor.knee.setValueAtTime(30, audioContext.currentTime)
+      compressor.ratio.setValueAtTime(8, audioContext.currentTime)
+      compressor.attack.setValueAtTime(0.003, audioContext.currentTime)
+      compressor.release.setValueAtTime(0.25, audioContext.currentTime)
+
+      // Gain boost to increase overall volume
+      const gainNode = audioContext.createGain()
+      gainNode.gain.value = 2.0
+
+      // Limiter to prevent clipping/distortion
+      const limiter = audioContext.createDynamicsCompressor()
+      limiter.threshold.setValueAtTime(-2, audioContext.currentTime)
+      limiter.knee.setValueAtTime(0, audioContext.currentTime)
+      limiter.ratio.setValueAtTime(20, audioContext.currentTime)
+      limiter.attack.setValueAtTime(0.001, audioContext.currentTime)
+      limiter.release.setValueAtTime(0.01, audioContext.currentTime)
+
+      // Output destination for processed audio
+      const destination = audioContext.createMediaStreamDestination()
+
+      // Chain: source → compressor → gain → limiter → destination
+      source.connect(compressor)
+      compressor.connect(gainNode)
+      gainNode.connect(limiter)
+      limiter.connect(destination)
+
+      // Start audio level visualization
       const updateLevels = () => {
         if (analyserRef.current) {
           const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount)
@@ -80,15 +186,75 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
             levels.push(dataArray[i * step] / 255)
           }
           setAudioLevels(levels)
-          // Track peak level for mic test feedback
-          const avg = levels.reduce((a, b) => a + b, 0) / levels.length
-          setMicTestPeak(prev => Math.max(prev, avg))
         }
         animationRef.current = requestAnimationFrame(updateLevels)
       }
       updateLevels()
 
-      setState('mic_test')
+      // Start backup session in IndexedDB
+      const sessionId = `rec-${Date.now()}`
+      sessionIdRef.current = sessionId
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4'
+      await startBackupSession(sessionId, mimeType)
+
+      // Create MediaRecorder with the processed (amplified) stream
+      // Use timeslice of 10 seconds so chunks are saved incrementally
+      const processedStream = destination.stream
+      const mediaRecorder = new MediaRecorder(processedStream, { mimeType })
+      mediaRecorderRef.current = mediaRecorder
+      chunksRef.current = []
+      chunkIndexRef.current = 0
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          chunksRef.current.push(e.data)
+          // Save each chunk to IndexedDB as backup
+          const idx = chunkIndexRef.current++
+          saveChunkToBackup(sessionIdRef.current, idx, e.data)
+        }
+      }
+
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: mimeType })
+        blobRef.current = blob
+        const url = URL.createObjectURL(blob)
+        setAudioUrl(url)
+        setState('recorded')
+        // Stop original microphone stream
+        stream.getTracks().forEach(track => track.stop())
+        streamRef.current = null
+        // Stop animation
+        if (animationRef.current) {
+          cancelAnimationFrame(animationRef.current)
+          animationRef.current = null
+        }
+        // Close audio context
+        if (audioContextRef.current) {
+          audioContextRef.current.close().catch(() => {})
+          audioContextRef.current = null
+        }
+        // Release wake lock
+        releaseWakeLock(wakeLockRef.current)
+        wakeLockRef.current = null
+        setAudioLevels(Array(20).fill(0))
+      }
+
+      // Start recording with 10-second timeslice for incremental chunk capture
+      mediaRecorder.start(10000)
+      setState('recording')
+      setDuration(0)
+
+      // Haptic + visual feedback on mobile when recording starts
+      if (navigator.vibrate) {
+        navigator.vibrate([50, 30, 50])
+      }
+      setShowRecordingFlash(true)
+      setTimeout(() => setShowRecordingFlash(false), 600)
+
+      timerRef.current = setInterval(() => {
+        setDuration(d => d + 1)
+      }, 1000)
+
     } catch (err) {
       console.error('Failed to access microphone:', err)
       setState('permission_denied')
@@ -107,56 +273,6 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
         setPermissionError('Er ging iets mis. Probeer het opnieuw.')
       }
     }
-  }, [])
-
-  // Start actual recording (after mic test passes)
-  const startRecording = useCallback(() => {
-    const stream = streamRef.current
-    if (!stream) return
-
-    const mediaRecorder = new MediaRecorder(stream, {
-      mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4'
-    })
-    mediaRecorderRef.current = mediaRecorder
-    chunksRef.current = []
-
-    mediaRecorder.ondataavailable = (e) => {
-      if (e.data.size > 0) {
-        chunksRef.current.push(e.data)
-      }
-    }
-
-    mediaRecorder.onstop = () => {
-      const mimeType = mediaRecorder.mimeType || 'audio/webm'
-      const blob = new Blob(chunksRef.current, { type: mimeType })
-      blobRef.current = blob
-      const url = URL.createObjectURL(blob)
-      setAudioUrl(url)
-      setState('recorded')
-      stream.getTracks().forEach(track => track.stop())
-      streamRef.current = null
-      // Stop animation
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current)
-        animationRef.current = null
-      }
-      setAudioLevels(Array(20).fill(0))
-    }
-
-    mediaRecorder.start()
-    setState('recording')
-    setDuration(0)
-
-    // Haptic + visual feedback on mobile when recording starts
-    if (navigator.vibrate) {
-      navigator.vibrate([50, 30, 50])
-    }
-    setShowRecordingFlash(true)
-    setTimeout(() => setShowRecordingFlash(false), 600)
-
-    timerRef.current = setInterval(() => {
-      setDuration(d => d + 1)
-    }, 1000)
   }, [])
 
   const stopRecording = useCallback(() => {
@@ -239,15 +355,23 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
       cancelAnimationFrame(animationRef.current)
       animationRef.current = null
     }
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(() => {})
+      audioContextRef.current = null
+    }
+    releaseWakeLock(wakeLockRef.current)
+    wakeLockRef.current = null
+    clearBackup()
     setAudioUrl(null)
     blobRef.current = null
     setDuration(0)
-    setMicTestPeak(0)
     setState('idle')
   }, [audioUrl])
 
   const confirmRecording = useCallback(() => {
     if (blobRef.current) {
+      // Clear backup on successful save
+      clearBackup()
       onRecordingComplete(blobRef.current, duration)
     }
   }, [duration, onRecordingComplete])
@@ -274,21 +398,49 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
       </AnimatePresence>
       {audioUrl && <audio ref={audioRef} src={audioUrl} onEnded={() => setState('recorded')} />}
 
+      {/* Recovery banner for interrupted recordings */}
+      {showRecovery && state === 'idle' && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-6 p-4 bg-honey/10 border-2 border-honey/30 rounded-xl"
+        >
+          <div className="flex items-start gap-3">
+            <svg className="w-6 h-6 text-honey flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div className="flex-1">
+              <p className="font-medium text-cocoa text-base">Vorige opname gevonden</p>
+              <p className="text-sm text-cocoa-light mt-1">
+                Er is een onderbroken opname van ~{formatTime(recoveredDuration)} gevonden. Wil je deze herstellen?
+              </p>
+              <div className="flex gap-3 mt-3">
+                <Button variant="primary" size="sm" onClick={handleRecoverRecording}>
+                  Herstellen
+                </Button>
+                <Button variant="ghost" size="sm" onClick={handleDiscardRecovery}>
+                  Weggooien
+                </Button>
+              </div>
+            </div>
+          </div>
+        </motion.div>
+      )}
+
       <div className="text-center mb-8">
         <h2 className="font-display text-2xl text-cocoa mb-2">
           {state === 'idle' && 'Klaar om op te nemen'}
           {state === 'requesting_permission' && 'Even geduld...'}
           {state === 'permission_denied' && 'Microfoon nodig'}
-          {state === 'mic_test' && 'Test je microfoon'}
           {state === 'recording' && 'Aan het opnemen...'}
           {state === 'paused' && 'Gepauzeerd'}
           {(state === 'recorded' || state === 'playing') && 'Opname klaar!'}
         </h2>
-        <p className="text-cocoa-light">
-          {state === 'idle' && 'Druk op de knop om te beginnen'}
+        <p className="text-cocoa-light text-lg">
+          {state === 'idle' && !showRecovery && 'Druk op de rode knop om te beginnen'}
+          {state === 'idle' && showRecovery && ''}
           {state === 'requesting_permission' && 'We vragen toegang tot je microfoon...'}
           {state === 'permission_denied' && permissionError}
-          {state === 'mic_test' && 'Zeg iets om te controleren of je microfoon werkt'}
           {state === 'recording' && 'Spreek duidelijk in de microfoon'}
           {state === 'paused' && 'Druk op de knop om verder te gaan'}
           {(state === 'recorded' || state === 'playing') && 'Beluister je opname hieronder'}
@@ -310,50 +462,6 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
         </motion.div>
       </div>
 
-      {/* Mic test volume meter */}
-      {state === 'mic_test' && (
-        <div className="mb-6">
-          <div className="flex items-center justify-center gap-1 h-16 mb-3" aria-hidden="true" role="presentation">
-            {audioLevels.map((level, i) => (
-              <motion.div
-                key={i}
-                className="w-2 rounded-full bg-gradient-to-t from-moss to-honey"
-                animate={{ height: Math.max(8, level * 60) }}
-                transition={{ duration: 0.05 }}
-              />
-            ))}
-          </div>
-          {/* Volume indicator */}
-          <div className="flex items-center gap-2 justify-center">
-            <div className="flex-1 max-w-[200px] bg-cream-dark rounded-full h-2 overflow-hidden">
-              <motion.div
-                className={`h-full rounded-full ${
-                  micTestPeak > 0.15 ? 'bg-moss' :
-                  micTestPeak > 0.05 ? 'bg-honey' : 'bg-cocoa-light'
-                }`}
-                animate={{ width: `${Math.min(100, micTestPeak * 300)}%` }}
-                transition={{ duration: 0.2 }}
-              />
-            </div>
-          </div>
-          {micTestPeak < 0.05 && (
-            <p className="text-center text-sm text-sunset mt-2">
-              We horen nog niets — zeg iets of controleer je microfoon
-            </p>
-          )}
-          {micTestPeak >= 0.05 && micTestPeak < 0.15 && (
-            <p className="text-center text-sm text-honey-dark mt-2">
-              Volume is laag — probeer dichter bij de microfoon te spreken
-            </p>
-          )}
-          {micTestPeak >= 0.15 && (
-            <p className="text-center text-sm text-moss mt-2">
-              Microfoon werkt goed!
-            </p>
-          )}
-        </div>
-      )}
-
       {/* Audio waveform visualization */}
       {(state === 'recording' || state === 'paused') && (
         <div className="flex items-center justify-center gap-1 h-16 mb-6" aria-hidden="true" role="presentation">
@@ -369,28 +477,20 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
       )}
 
       {/* Spacer when not recording */}
-      {state !== 'recording' && state !== 'paused' && state !== 'mic_test' && <div className="h-4 mb-4" />}
+      {state !== 'recording' && state !== 'paused' && <div className="h-4 mb-4" />}
 
       {/* Main control */}
       <div className="flex justify-center mb-8" role="group" aria-label="Opname bediening">
         {(state === 'idle' || state === 'permission_denied') && (
-          <Button variant="record" size="xl" onClick={startMicTest} aria-label="Test microfoon">
-            <svg className="w-12 h-12" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="12" cy="12" r="6" />
-            </svg>
-          </Button>
-        )}
-
-        {state === 'mic_test' && (
           <Button variant="record" size="xl" onClick={startRecording} aria-label="Start opname">
-            <svg className="w-12 h-12" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="12" cy="12" r="6" />
+            <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
             </svg>
           </Button>
         )}
 
         {state === 'requesting_permission' && (
-          <div className="w-[120px] h-[120px] rounded-[32px] bg-cream-dark flex items-center justify-center" aria-label="Wachten op microfoon toegang">
+          <div className="w-[100px] h-[100px] rounded-[32px] bg-cream-dark flex items-center justify-center" aria-label="Wachten op microfoon toegang">
             <motion.div
               animate={{ rotate: 360 }}
               transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
@@ -456,7 +556,7 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
                 <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
               </svg>
             ) : (
-              <svg className="w-12 h-12 ml-1" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <svg className="w-10 h-10" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M8 5v14l11-7z" />
               </svg>
             )}
@@ -470,32 +570,6 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
           <Button variant="ghost" onClick={onCancel}>
             Annuleren
           </Button>
-        )}
-
-        {state === 'mic_test' && (
-          <>
-            <Button variant="ghost" onClick={() => {
-              // Stop stream and go back
-              if (streamRef.current) {
-                streamRef.current.getTracks().forEach(track => track.stop())
-                streamRef.current = null
-              }
-              if (animationRef.current) {
-                cancelAnimationFrame(animationRef.current)
-                animationRef.current = null
-              }
-              setAudioLevels(Array(20).fill(0))
-              onCancel()
-            }}>
-              Annuleren
-            </Button>
-            <Button variant="primary" onClick={startRecording}>
-              <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 24 24">
-                <circle cx="12" cy="12" r="6" />
-              </svg>
-              Start opname
-            </Button>
-          </>
         )}
 
         {state === 'recording' && (

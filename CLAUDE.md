@@ -58,6 +58,13 @@ Vereist in `.env`:
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
 
+## Gotchas
+
+- Supabase RLS policies zijn actief — queries falen silently als permissions niet kloppen
+- Audio bestanden gaan via Supabase Storage — check bucket policies bij upload issues
+- `api/ocr.ts` is een Vercel serverless function voor OCR processing
+- User rollen: `reader`, `admin`, `listener` — bepalen toegang tot features
+
 ## Conventies
 
 - ESLint + TypeScript strict mode

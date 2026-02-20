@@ -46,7 +46,7 @@ const sizeStyles: Record<ButtonSize, string> = {
   sm: 'px-4 py-2 text-sm rounded-[16px]',
   md: 'px-6 py-3 text-base rounded-[20px]',
   lg: 'px-8 py-4 text-lg rounded-[24px]',
-  xl: 'px-10 py-6 text-xl rounded-[32px] min-w-[120px] min-h-[120px]',
+  xl: 'p-4 text-xl rounded-[32px] min-w-[100px] min-h-[100px]',
 }
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(

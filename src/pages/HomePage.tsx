@@ -164,12 +164,15 @@ export function HomePage() {
               variant="play"
               size="lg"
               onClick={() => navigate('/luisteren')}
-              className="min-w-[220px] glow-sky"
+              className="min-w-[220px] glow-sky flex-col !gap-0.5"
             >
-              <svg className="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M8 5v14l11-7z" />
-              </svg>
-              Luisteren
+              <span className="flex items-center gap-2">
+                <svg className="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+                Luisteren
+              </span>
+              <span className="text-xs font-normal opacity-80">Beluister opnames</span>
             </Button>
           </motion.div>
 
@@ -181,12 +184,15 @@ export function HomePage() {
               variant="secondary"
               size="lg"
               onClick={() => navigate('/voorlezen')}
-              className="min-w-[220px]"
+              className="min-w-[220px] flex-col !gap-0.5"
             >
-              <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-              </svg>
-              Voorlezen
+              <span className="flex items-center gap-2">
+                <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                </svg>
+                Voorlezen
+              </span>
+              <span className="text-xs font-normal opacity-70">Neem een hoofdstuk op</span>
             </Button>
           </motion.div>
         </motion.div>

@@ -706,7 +706,7 @@ export function AudioPlayer({
                   <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
                 </svg>
               ) : (
-                <svg className="w-10 h-10 sm:w-12 sm:h-12 ml-1" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <svg className="w-10 h-10 sm:w-12 sm:h-12" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                   <path d="M8 5v14l11-7z" />
                 </svg>
               )}
@@ -795,17 +795,23 @@ export function AudioPlayer({
                   <div>
                     <h4 className="text-sm font-medium text-cocoa mb-3">Afspeelsnelheid</h4>
                     <div className="flex gap-2">
-                      {([0.75, 1, 1.25, 1.5, 2] as PlaybackSpeed[]).map(speed => (
+                      {([
+                        { value: 0.75 as PlaybackSpeed, label: 'Langzaam' },
+                        { value: 1 as PlaybackSpeed, label: 'Normaal' },
+                        { value: 1.25 as PlaybackSpeed, label: 'Sneller' },
+                        { value: 1.5 as PlaybackSpeed, label: 'Snel' },
+                        { value: 2 as PlaybackSpeed, label: '2x' },
+                      ]).map(({ value, label }) => (
                         <button
-                          key={speed}
-                          onClick={() => setPlaybackSpeed(speed)}
+                          key={value}
+                          onClick={() => setPlaybackSpeed(value)}
                           className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-colors ${
-                            playbackSpeed === speed
+                            playbackSpeed === value
                               ? 'bg-sky text-white'
                               : 'bg-cream-dark text-cocoa hover:bg-honey-light'
                           }`}
                         >
-                          {speed}x
+                          {label}
                         </button>
                       ))}
                     </div>
