@@ -370,6 +370,27 @@ export function ReadPage() {
     }
   }
 
+  // Go to the next chapter directly
+  const handleNextChapter = async () => {
+    if (!selectedBook || !currentChapter) return
+    const chapters = getChaptersForBook(selectedBook.id)
+    setBookChapters(chapters)
+    const sorted = [...chapters].sort((a, b) => a.chapter_number - b.chapter_number)
+    const currentIndex = sorted.findIndex(c => c.id === currentChapter.id)
+    const nextChapter = sorted[currentIndex + 1]
+    if (nextChapter) {
+      await handleChapterSelect(nextChapter)
+    }
+  }
+
+  // Get the next chapter (for UI display)
+  const getNextChapter = (): Chapter | null => {
+    if (!selectedBook || !currentChapter) return null
+    const sorted = [...bookChapters].sort((a, b) => a.chapter_number - b.chapter_number)
+    const currentIndex = sorted.findIndex(c => c.id === currentChapter.id)
+    return sorted[currentIndex + 1] || null
+  }
+
   // Go back to chapter selection for another recording
   const handleAnotherChapter = () => {
     if (!selectedBook) return
@@ -1032,17 +1053,26 @@ export function ReadPage() {
             </p>
 
             <div className="flex flex-col gap-4">
-              {/* Primary action: choose another chapter */}
-              <Button variant="primary" size="lg" onClick={handleAnotherChapter} className="w-full">
-                <svg className="w-6 h-6 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
-                </svg>
-                Nog een hoofdstuk opnemen
-              </Button>
+              {/* Primary action: next chapter if available */}
+              {getNextChapter() ? (
+                <Button variant="primary" size="lg" onClick={handleNextChapter} className="w-full">
+                  <svg className="w-6 h-6 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+                  </svg>
+                  Volgend hoofdstuk: {getNextChapter()?.title}
+                </Button>
+              ) : (
+                <Button variant="primary" size="lg" onClick={handleAnotherChapter} className="w-full">
+                  <svg className="w-6 h-6 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  Alle hoofdstukken opgenomen!
+                </Button>
+              )}
 
               <div className="flex gap-4">
-                <Button variant="secondary" onClick={handleNewRecording} className="flex-1">
-                  Ander boek
+                <Button variant="secondary" onClick={handleAnotherChapter} className="flex-1">
+                  Ander hoofdstuk
                 </Button>
                 <Button variant="ghost" onClick={() => navigate('/')} className="flex-1">
                   Klaar voor nu
