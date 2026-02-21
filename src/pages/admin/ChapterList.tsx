@@ -164,11 +164,11 @@ export function ChapterList({ book, users, onBack, onEditBook }: ChapterListProp
     const file = e.target.files?.[0]
     if (!file || !uploadingChapterId) return
 
-    const hasAudioMimeType = file.type.startsWith('audio/')
-    const hasAudioExtension = /\.(mp3|wav|m4a|ogg|webm)$/i.test(file.name)
+    const hasMediaMimeType = file.type.startsWith('audio/') || file.type === 'video/mp4'
+    const hasMediaExtension = /\.(mp3|wav|m4a|ogg|webm|mp4)$/i.test(file.name)
 
-    if (!hasAudioMimeType && !hasAudioExtension) {
-      showToast('Selecteer een audiobestand (mp3, wav, m4a, etc.)', 'error')
+    if (!hasMediaMimeType && !hasMediaExtension) {
+      showToast('Selecteer een audio- of videobestand (mp3, mp4, wav, m4a, etc.)', 'error')
       return
     }
 
@@ -373,7 +373,7 @@ export function ChapterList({ book, users, onBack, onEditBook }: ChapterListProp
       <input
         ref={audioFileInputRef}
         type="file"
-        accept="audio/*,.m4a,.mp3,.wav,.ogg,.webm"
+        accept="audio/*,video/mp4,.m4a,.mp3,.wav,.ogg,.webm,.mp4"
         onChange={handleAudioFileChange}
         className="hidden"
       />
