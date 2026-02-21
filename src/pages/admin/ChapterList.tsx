@@ -188,12 +188,13 @@ export function ChapterList({ book, users, onBack, onEditBook }: ChapterListProp
 
     try {
       const duration = await new Promise<number>((resolve) => {
-        const audio = new Audio()
-        audio.onloadedmetadata = () => {
-          resolve(Math.round(audio.duration))
+        const isVideo = pendingAudioFile.type.startsWith('video/') || /\.mp4$/i.test(pendingAudioFile.name)
+        const media = isVideo ? document.createElement('video') : new Audio()
+        media.onloadedmetadata = () => {
+          resolve(Math.round(media.duration))
         }
-        audio.onerror = () => resolve(0)
-        audio.src = URL.createObjectURL(pendingAudioFile)
+        media.onerror = () => resolve(0)
+        media.src = URL.createObjectURL(pendingAudioFile)
       })
 
       await replaceRecordingAsync(uploadingChapterId, readerId, pendingAudioFile, duration)
