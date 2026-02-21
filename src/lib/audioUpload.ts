@@ -165,6 +165,7 @@ export async function uploadAudioFile(
     }
 
     // Step 3: Replace existing or add new recording (prevents duplicates)
+    let progressTimer: ReturnType<typeof setInterval> | null = null
     try {
       // Signal upload start
       onProgress?.(5)
@@ -175,7 +176,7 @@ export async function uploadAudioFile(
       const progressInterval = 200 // update every 200ms
       const steps = estimatedDurationMs / progressInterval
       let currentProgress = 5
-      const progressTimer = setInterval(() => {
+      progressTimer = setInterval(() => {
         // Approach 90% asymptotically
         currentProgress += (90 - currentProgress) / steps
         onProgress?.(Math.min(Math.round(currentProgress), 90))
@@ -197,6 +198,8 @@ export async function uploadAudioFile(
         duration,
       }
     } catch (error) {
+      if (progressTimer) clearInterval(progressTimer)
+      onProgress?.(0)
       console.error('Upload failed:', error)
 
       // Check if it's a network error

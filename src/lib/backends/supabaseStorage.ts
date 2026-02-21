@@ -18,13 +18,14 @@ export class SupabaseStorageBackend implements AudioStorageBackend {
       return null
     }
 
+    const contentType = audioBlob.type || 'audio/webm'
     const fileName = `${recordingId}.webm`
 
     try {
       const { data, error } = await supabase.storage
         .from('audio')
         .upload(fileName, audioBlob, {
-          contentType: 'audio/webm',
+          contentType,
           upsert: true,
         })
 
