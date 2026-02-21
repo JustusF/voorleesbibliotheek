@@ -10,7 +10,9 @@ import {
   getRecordings,
   getProgress,
   type ChapterProgress,
+  type SyncError,
   isSupabaseConfigured,
+  setSyncErrorHandler,
   subscribeToBooks,
   subscribeToChapters,
   subscribeToRecordings,
@@ -37,6 +39,7 @@ interface AppState {
 
   // Error state
   error: AppError | null
+  syncErrors: SyncError[]
 
   // Network state
   isOnline: boolean
@@ -72,6 +75,8 @@ type AppAction =
   | { type: 'ADD_RECORDING'; payload: Recording }
   | { type: 'DELETE_RECORDING'; payload: string }
   | { type: 'UPDATE_PROGRESS'; payload: { chapterId: string; progress: ChapterProgress } }
+  | { type: 'ADD_SYNC_ERROR'; payload: SyncError }
+  | { type: 'CLEAR_SYNC_ERRORS' }
 
 // ============================================
 // REDUCER
@@ -153,6 +158,17 @@ function appReducer(state: AppState, action: AppAction): AppState {
         },
       }
 
+    case 'ADD_SYNC_ERROR':
+      // Keep max 10 errors, deduplicate by message
+      if (state.syncErrors.some(e => e.message === action.payload.message)) return state
+      return {
+        ...state,
+        syncErrors: [...state.syncErrors, action.payload].slice(-10),
+      }
+
+    case 'CLEAR_SYNC_ERRORS':
+      return { ...state, syncErrors: [] }
+
     default:
       return state
   }
@@ -171,6 +187,7 @@ const initialState: AppState = {
   isLoading: true,
   isInitialized: false,
   error: null,
+  syncErrors: [],
   isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
   syncStatus: 'idle',
 }
@@ -194,6 +211,7 @@ interface AppContextValue {
   // Actions
   refreshData: () => Promise<void>
   clearError: () => void
+  clearSyncErrors: () => void
 }
 
 const AppContext = createContext<AppContextValue | null>(null)
@@ -263,6 +281,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // ---- Actions ----
   const clearError = useCallback(() => {
     dispatch({ type: 'SET_ERROR', payload: null })
+  }, [])
+
+  const clearSyncErrors = useCallback(() => {
+    dispatch({ type: 'CLEAR_SYNC_ERRORS' })
+  }, [])
+
+  // Wire up sync error handler from storage layer
+  useEffect(() => {
+    setSyncErrorHandler((error) => {
+      dispatch({ type: 'ADD_SYNC_ERROR', payload: error })
+    })
+    return () => setSyncErrorHandler(null)
   }, [])
 
   const refreshData = useCallback(async () => {
@@ -450,6 +480,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     getChapterProgress,
     refreshData,
     clearError,
+    clearSyncErrors,
   }
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>
@@ -493,4 +524,9 @@ export function useSyncStatus() {
     syncStatus: state.syncStatus,
     isLoading: state.isLoading,
   }), [state.isOnline, state.syncStatus, state.isLoading])
+}
+
+export function useSyncErrors() {
+  const { state, clearSyncErrors } = useApp()
+  return { syncErrors: state.syncErrors, clearSyncErrors }
 }

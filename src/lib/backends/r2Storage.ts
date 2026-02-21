@@ -4,6 +4,7 @@
  */
 
 import type { AudioStorageBackend } from '../storageBackend'
+import { getAudioFileInfo, getExtensionFromUrl } from '../storageBackend'
 
 // Environment variables for R2 configuration
 const R2_WORKER_URL = import.meta.env.VITE_R2_WORKER_URL || ''
@@ -35,8 +36,8 @@ export class R2StorageBackend implements AudioStorageBackend {
       return null
     }
 
-    const fileName = `${recordingId}.webm`
-    const contentType = audioBlob.type || 'audio/webm'
+    const { extension, contentType } = getAudioFileInfo(audioBlob)
+    const fileName = `${recordingId}${extension}`
 
     try {
       const response = await fetch(`${this.workerUrl}/upload/${fileName}`, {
@@ -54,7 +55,7 @@ export class R2StorageBackend implements AudioStorageBackend {
       }
 
       // Return the public URL for the uploaded file
-      return this.getPublicUrl(recordingId)
+      return `${this.publicUrl}/${fileName}`
     } catch (error) {
       console.error('[R2Storage] Unexpected upload error:', error)
       return null
@@ -64,12 +65,13 @@ export class R2StorageBackend implements AudioStorageBackend {
   /**
    * Delete audio from R2 via Cloudflare Worker proxy
    */
-  async delete(recordingId: string): Promise<boolean> {
+  async delete(recordingId: string, audioUrl?: string): Promise<boolean> {
     if (!this.isConfigured()) {
       return false
     }
 
-    const fileName = `${recordingId}.webm`
+    const extension = audioUrl ? getExtensionFromUrl(audioUrl) : '.webm'
+    const fileName = `${recordingId}${extension}`
 
     try {
       const response = await fetch(`${this.workerUrl}/delete/${fileName}`, {

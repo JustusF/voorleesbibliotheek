@@ -5,6 +5,7 @@
 
 import { supabase, isSupabaseConfigured } from '../supabase'
 import type { AudioStorageBackend } from '../storageBackend'
+import { getAudioFileInfo, getExtensionFromUrl } from '../storageBackend'
 
 export class SupabaseStorageBackend implements AudioStorageBackend {
   name = 'supabase'
@@ -18,15 +19,14 @@ export class SupabaseStorageBackend implements AudioStorageBackend {
       return null
     }
 
-    const fileName = `${recordingId}.webm`
-    // Re-wrap blob as audio/webm to satisfy bucket MIME type restrictions
-    const uploadBlob = new Blob([audioBlob], { type: 'audio/webm' })
+    const { extension, contentType } = getAudioFileInfo(audioBlob)
+    const fileName = `${recordingId}${extension}`
 
     try {
       const { data, error } = await supabase.storage
         .from('audio')
-        .upload(fileName, uploadBlob, {
-          contentType: 'audio/webm',
+        .upload(fileName, audioBlob, {
+          contentType,
           upsert: true,
         })
 
@@ -49,15 +49,18 @@ export class SupabaseStorageBackend implements AudioStorageBackend {
   /**
    * Delete audio from Supabase Storage
    */
-  async delete(recordingId: string): Promise<boolean> {
+  async delete(recordingId: string, audioUrl?: string): Promise<boolean> {
     if (!isSupabaseConfigured || !supabase) {
       return false
     }
 
+    const extension = audioUrl ? getExtensionFromUrl(audioUrl) : '.webm'
+    const fileName = `${recordingId}${extension}`
+
     try {
       const { error } = await supabase.storage
         .from('audio')
-        .remove([`${recordingId}.webm`])
+        .remove([fileName])
 
       if (error) {
         console.error('[SupabaseStorage] Delete error:', error)

@@ -7,6 +7,33 @@ import { SupabaseStorageBackend } from './backends/supabaseStorage'
 import { R2StorageBackend, isR2Configured } from './backends/r2Storage'
 
 /**
+ * Detect audio file info from a Blob's MIME type.
+ * MP4 containers (from WhatsApp Audio, etc.) get .mp4 extension; everything else defaults to .webm.
+ */
+export function getAudioFileInfo(blob: Blob): { extension: string; contentType: string } {
+  const type = (blob.type || '').toLowerCase()
+  if (type.includes('mp4') || type.includes('m4a') || type.includes('aac') || type.includes('mp4a')) {
+    return { extension: '.mp4', contentType: 'audio/mp4' }
+  }
+  return { extension: '.webm', contentType: 'audio/webm' }
+}
+
+/**
+ * Extract file extension from a stored audio URL.
+ * Falls back to .webm for backward compatibility.
+ */
+export function getExtensionFromUrl(audioUrl: string): string {
+  try {
+    const path = new URL(audioUrl).pathname
+    if (path.endsWith('.mp4')) return '.mp4'
+  } catch {
+    // Not a valid URL, check raw string
+    if (audioUrl.includes('.mp4')) return '.mp4'
+  }
+  return '.webm'
+}
+
+/**
  * Abstract interface for audio storage backends
  */
 export interface AudioStorageBackend {
@@ -24,9 +51,10 @@ export interface AudioStorageBackend {
   /**
    * Delete audio from storage
    * @param recordingId - Recording ID to delete
+   * @param audioUrl - Optional stored audio URL to determine file extension
    * @returns true if deletion was successful
    */
-  delete(recordingId: string): Promise<boolean>
+  delete(recordingId: string, audioUrl?: string): Promise<boolean>
 
   /**
    * Get the public URL for a recording

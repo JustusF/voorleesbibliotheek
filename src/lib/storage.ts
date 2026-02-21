@@ -9,6 +9,29 @@ export const isSupabaseConfigured = supabaseConfigured
 export { isAnyStorageConfigured, getStorageBackend }
 
 // ============================================
+// SYNC ERROR REPORTING
+// ============================================
+
+export interface SyncError {
+  message: string
+  table?: string
+  operation?: string
+  timestamp: Date
+}
+
+type SyncErrorHandler = (error: SyncError) => void
+let syncErrorHandler: SyncErrorHandler | null = null
+
+export function setSyncErrorHandler(handler: SyncErrorHandler | null): void {
+  syncErrorHandler = handler
+}
+
+function reportSyncError(message: string, table?: string, operation?: string): void {
+  console.error(`[Sync Error] ${message}`, { table, operation })
+  syncErrorHandler?.({ message, table, operation, timestamp: new Date() })
+}
+
+// ============================================
 // ERROR HANDLING & RETRY UTILITIES
 // ============================================
 
@@ -48,32 +71,44 @@ interface PendingOperation {
   operation: 'insert' | 'update' | 'delete'
   data: Record<string, unknown>
   timestamp: string
+  retryCount: number
+  lastAttempt: string | null
 }
 
 const PENDING_OPS_KEY = 'voorleesbibliotheek_pending_ops'
+const MAX_RETRIES = 5
+const MAX_AGE_DAYS = 7
 
 function getPendingOperations(): PendingOperation[] {
   try {
     const stored = localStorage.getItem(PENDING_OPS_KEY)
-    return stored ? JSON.parse(stored) : []
+    if (!stored) return []
+    const ops: PendingOperation[] = JSON.parse(stored)
+    // Migrate old ops without retryCount/lastAttempt
+    return ops.map(op => ({
+      ...op,
+      retryCount: op.retryCount ?? 0,
+      lastAttempt: op.lastAttempt ?? null,
+    }))
   } catch {
     return []
   }
 }
 
-function addPendingOperation(op: Omit<PendingOperation, 'id' | 'timestamp'>): void {
+function savePendingOperations(operations: PendingOperation[]): void {
+  localStorage.setItem(PENDING_OPS_KEY, JSON.stringify(operations))
+}
+
+function addPendingOperation(op: Omit<PendingOperation, 'id' | 'timestamp' | 'retryCount' | 'lastAttempt'>): void {
   const operations = getPendingOperations()
   operations.push({
     ...op,
     id: crypto.randomUUID(),
     timestamp: new Date().toISOString(),
+    retryCount: 0,
+    lastAttempt: null,
   })
-  localStorage.setItem(PENDING_OPS_KEY, JSON.stringify(operations))
-}
-
-function clearPendingOperation(id: string): void {
-  const operations = getPendingOperations().filter((op) => op.id !== id)
-  localStorage.setItem(PENDING_OPS_KEY, JSON.stringify(operations))
+  savePendingOperations(operations)
 }
 
 // Process pending operations when back online
@@ -81,30 +116,61 @@ export async function processPendingOperations(): Promise<{ success: number; fai
   if (!isSupabaseConfigured || !supabase) return { success: 0, failed: 0 }
 
   const operations = getPendingOperations()
+  const now = Date.now()
   let success = 0
   let failed = 0
+  const updatedOps: PendingOperation[] = []
 
   for (const op of operations) {
+    // Remove ops older than 7 days
+    const ageMs = now - new Date(op.timestamp).getTime()
+    if (ageMs > MAX_AGE_DAYS * 24 * 60 * 60 * 1000) {
+      continue // Drop expired op
+    }
+
+    // Remove ops that exceeded max retries
+    if (op.retryCount >= MAX_RETRIES) {
+      continue // Drop exhausted op
+    }
+
+    // Backoff: skip if lastAttempt was less than (retryCount * 30s) ago
+    if (op.lastAttempt) {
+      const backoffMs = op.retryCount * 30_000
+      const timeSinceLastAttempt = now - new Date(op.lastAttempt).getTime()
+      if (timeSinceLastAttempt < backoffMs) {
+        updatedOps.push(op) // Keep for next cycle
+        continue
+      }
+    }
+
     try {
       // Strip 'author' from books — column not yet in Supabase schema
       const data = op.table === 'books'
         ? (({ author: _a, ...rest }: Record<string, unknown>) => rest)(op.data)
         : op.data
       if (op.operation === 'insert') {
-        await supabase.from(op.table).insert(data)
+        const { error } = await supabase.from(op.table).upsert(data)
+        if (error) throw error
       } else if (op.operation === 'update') {
-        await supabase.from(op.table).update(data).eq('id', op.data.id)
+        const { error } = await supabase.from(op.table).update(data).eq('id', op.data.id)
+        if (error) throw error
       } else if (op.operation === 'delete') {
-        await supabase.from(op.table).delete().eq('id', op.data.id)
+        const { error } = await supabase.from(op.table).delete().eq('id', op.data.id)
+        if (error) throw error
       }
-      clearPendingOperation(op.id)
       success++
     } catch (error) {
       console.error(`Failed to process pending operation ${op.id}:`, error)
+      updatedOps.push({
+        ...op,
+        retryCount: op.retryCount + 1,
+        lastAttempt: new Date().toISOString(),
+      })
       failed++
     }
   }
 
+  savePendingOperations(updatedOps)
   return { success, failed }
 }
 
@@ -262,7 +328,7 @@ export function addBook(title: string, author?: string, coverUrl?: string): Book
     const { author: _author, ...bookForSupabase } = newBook
     supabase.from('books').insert(bookForSupabase).then(({ error }) => {
       if (error) {
-        console.error('Error syncing book to Supabase:', error)
+        reportSyncError('Boek opslaan mislukt', 'books', 'insert')
         addPendingOperation({
           table: 'books',
           operation: 'insert',
@@ -310,7 +376,7 @@ export function updateBook(id: string, updates: Partial<Book>): Book | null {
     const { author: _a, ...updatesForSupabase } = updates
     supabase.from('books').update(updatesForSupabase).eq('id', id).then(({ error }) => {
       if (error) {
-        console.error('Error syncing book update to Supabase:', error)
+        reportSyncError('Boek bijwerken mislukt', 'books', 'update')
         addPendingOperation({
           table: 'books',
           operation: 'update',
@@ -344,7 +410,7 @@ export function deleteBook(id: string): void {
   if (isSupabaseConfigured && supabase) {
     supabase.from('books').delete().eq('id', id).then(({ error }) => {
       if (error) {
-        console.error('Error syncing book deletion to Supabase:', error)
+        reportSyncError('Boek verwijderen mislukt', 'books', 'delete')
         addPendingOperation({
           table: 'books',
           operation: 'delete',
@@ -453,7 +519,7 @@ export function addChapter(bookId: string, chapterNumber: number, title: string)
 
   if (isSupabaseConfigured && supabase) {
     supabase.from('chapters').insert(newChapter).then(({ error }) => {
-      if (error) console.error('Error syncing chapter to Supabase:', error)
+      if (error) reportSyncError('Hoofdstuk opslaan mislukt', 'chapters', 'insert')
     })
   }
 
@@ -474,7 +540,7 @@ export function addChapters(bookId: string, chapterTitles: string[]): Chapter[] 
 
   if (isSupabaseConfigured && supabase) {
     supabase.from('chapters').insert(newChapters).then(({ error }) => {
-      if (error) console.error('Error syncing chapters to Supabase:', error)
+      if (error) reportSyncError('Hoofdstukken opslaan mislukt', 'chapters', 'insert')
     })
   }
 
@@ -490,7 +556,7 @@ export function updateChapter(id: string, updates: Partial<Chapter>): Chapter | 
 
   if (isSupabaseConfigured && supabase) {
     supabase.from('chapters').update(updates).eq('id', id).then(({ error }) => {
-      if (error) console.error('Error syncing chapter update to Supabase:', error)
+      if (error) reportSyncError('Hoofdstuk bijwerken mislukt', 'chapters', 'update')
     })
   }
 
@@ -513,7 +579,7 @@ export async function deleteChapterAsync(id: string): Promise<void> {
 
     const { error: chapError } = await supabase.from('chapters').delete().eq('id', id)
     if (chapError) {
-      console.error('Error syncing chapter deletion to Supabase:', chapError)
+      reportSyncError('Hoofdstuk verwijderen mislukt', 'chapters', 'delete')
       // Queue for retry later
       addPendingOperation({
         table: 'chapters',
@@ -535,11 +601,11 @@ export function deleteChapter(id: string): void {
   if (isSupabaseConfigured && supabase) {
     // Delete recordings first, then chapter
     supabase.from('recordings').delete().eq('chapter_id', id).then(({ error }) => {
-      if (error) console.error('Error deleting recordings for chapter from Supabase:', error)
+      if (error) reportSyncError('Opnames verwijderen mislukt', 'recordings', 'delete')
     })
     supabase.from('chapters').delete().eq('id', id).then(({ error }) => {
       if (error) {
-        console.error('Error syncing chapter deletion to Supabase:', error)
+        reportSyncError('Hoofdstuk verwijderen mislukt', 'chapters', 'delete')
         // Queue for retry later
         addPendingOperation({
           table: 'chapters',
@@ -627,7 +693,7 @@ async function uploadAudioToStorage(audioBlob: Blob, recordingId: string): Promi
 }
 
 // Delete audio from storage backend (R2 or Supabase)
-async function deleteAudioFromStorage(recordingId: string): Promise<boolean> {
+async function deleteAudioFromStorage(recordingId: string, audioUrl?: string): Promise<boolean> {
   const backend = getStorageBackend()
 
   if (!backend.isConfigured()) {
@@ -635,7 +701,7 @@ async function deleteAudioFromStorage(recordingId: string): Promise<boolean> {
   }
 
   console.log(`[Storage] Deleting from ${backend.name}...`)
-  return backend.delete(recordingId)
+  return backend.delete(recordingId, audioUrl)
 }
 
 export async function addRecordingAsync(
@@ -698,7 +764,7 @@ export async function addRecordingAsync(
   if (isSupabaseConfigured && supabase) {
     const { error } = await supabase.from('recordings').insert(newRecording)
     if (error) {
-      console.error('Error syncing recording to Supabase (saved locally):', error)
+      reportSyncError('Opname opslaan mislukt', 'recordings', 'insert')
       addPendingOperation({
         table: 'recordings',
         operation: 'insert',
@@ -738,7 +804,7 @@ export function addRecording(chapterId: string, readerId: string, audioUrl: stri
             audio_url: uploadedUrl || audioUrl,
           }
           sb.from('recordings').insert(recordingToInsert).then(({ error }) => {
-            if (error) console.error('Error syncing recording to Supabase:', error)
+            if (error) reportSyncError('Opname opslaan mislukt', 'recordings', 'insert')
           })
         })
     } else {
@@ -752,19 +818,21 @@ export function addRecording(chapterId: string, readerId: string, audioUrl: stri
 }
 
 export async function deleteRecordingAsync(id: string): Promise<void> {
-  const recordings = loadFromStorage<Recording[]>(STORAGE_KEYS.recordings, []).filter(r => r.id !== id)
+  const allRecordings = loadFromStorage<Recording[]>(STORAGE_KEYS.recordings, [])
+  const recording = allRecordings.find(r => r.id === id)
+  const recordings = allRecordings.filter(r => r.id !== id)
   saveToStorage(STORAGE_KEYS.recordings, recordings)
 
   // Delete from storage backend (R2 or Supabase Storage)
   if (isAnyStorageConfigured()) {
-    await deleteAudioFromStorage(id)
+    await deleteAudioFromStorage(id, recording?.audio_url)
   }
 
   if (isSupabaseConfigured && supabase) {
     // Delete from database
     const { error: dbError } = await supabase.from('recordings').delete().eq('id', id)
     if (dbError) {
-      console.error('Error syncing recording deletion to Supabase:', dbError)
+      reportSyncError('Opname verwijderen mislukt', 'recordings', 'delete')
       // Queue for retry later
       addPendingOperation({
         table: 'recordings',
@@ -776,12 +844,14 @@ export async function deleteRecordingAsync(id: string): Promise<void> {
 }
 
 export function deleteRecording(id: string): void {
-  const recordings = loadFromStorage<Recording[]>(STORAGE_KEYS.recordings, []).filter(r => r.id !== id)
+  const allRecordings = loadFromStorage<Recording[]>(STORAGE_KEYS.recordings, [])
+  const recording = allRecordings.find(r => r.id === id)
+  const recordings = allRecordings.filter(r => r.id !== id)
   saveToStorage(STORAGE_KEYS.recordings, recordings)
 
   // Delete from storage backend (R2 or Supabase Storage)
   if (isAnyStorageConfigured()) {
-    deleteAudioFromStorage(id).catch((error) => {
+    deleteAudioFromStorage(id, recording?.audio_url).catch((error) => {
       console.error('Error deleting audio from storage:', error)
     })
   }
@@ -790,7 +860,7 @@ export function deleteRecording(id: string): void {
     // Delete from database
     supabase.from('recordings').delete().eq('id', id).then(({ error }) => {
       if (error) {
-        console.error('Error syncing recording deletion to Supabase:', error)
+        reportSyncError('Opname verwijderen mislukt', 'recordings', 'delete')
         // Queue for retry later
         addPendingOperation({
           table: 'recordings',
@@ -867,7 +937,7 @@ export function addUser(name: string, role: 'reader' | 'admin' | 'listener' = 'r
 
   if (isSupabaseConfigured && supabase) {
     supabase.from('users').insert(newUser).then(({ error }) => {
-      if (error) console.error('Error syncing user to Supabase:', error)
+      if (error) reportSyncError('Gebruiker opslaan mislukt', 'users', 'insert')
     })
   }
 
@@ -883,7 +953,7 @@ export function updateUser(id: string, updates: Partial<User>): User | null {
 
   if (isSupabaseConfigured && supabase) {
     supabase.from('users').update(updates).eq('id', id).then(({ error }) => {
-      if (error) console.error('Error syncing user update to Supabase:', error)
+      if (error) reportSyncError('Gebruiker bijwerken mislukt', 'users', 'update')
     })
   }
 
@@ -896,7 +966,7 @@ export function deleteUser(id: string): void {
 
   if (isSupabaseConfigured && supabase) {
     supabase.from('users').delete().eq('id', id).then(({ error }) => {
-      if (error) console.error('Error syncing user deletion to Supabase:', error)
+      if (error) reportSyncError('Gebruiker verwijderen mislukt', 'users', 'delete')
     })
   }
 }
@@ -1008,7 +1078,7 @@ export function saveChapterProgress(
   saveToStorage(key, progress)
 
   if (isSupabaseConfigured && supabase) {
-    supabase.from('progress').upsert({
+    const progressData = {
       chapter_id: chapterId,
       recording_id: recordingId,
       listener_id: listenerId || activeListenerId,
@@ -1016,8 +1086,16 @@ export function saveChapterProgress(
       duration,
       completed,
       last_played: new Date().toISOString(),
-    }, { onConflict: 'chapter_id' }).then(({ error }) => {
-      if (error) console.error('Error syncing progress to Supabase:', error)
+    }
+    supabase.from('progress').upsert(progressData, { onConflict: 'chapter_id,listener_id' }).then(({ error }) => {
+      if (error) {
+        reportSyncError('Voortgang opslaan mislukt', 'progress', 'upsert')
+        addPendingOperation({
+          table: 'progress',
+          operation: 'insert',
+          data: progressData as unknown as Record<string, unknown>,
+        })
+      }
     })
   }
 }
@@ -1167,7 +1245,7 @@ export function markChapterComplete(chapterId: string): void {
 
     if (isSupabaseConfigured && supabase) {
       supabase.from('progress').update({ completed: true }).eq('chapter_id', chapterId).then(({ error }) => {
-        if (error) console.error('Error syncing completion to Supabase:', error)
+        if (error) reportSyncError('Voltooiing opslaan mislukt', 'progress', 'update')
       })
     }
   }
@@ -1215,21 +1293,21 @@ export async function syncToSupabase(): Promise<void> {
   if (localBooks.length > 0) {
     const booksForSupabase = localBooks.map(({ author: _a, ...rest }) => rest)
     const { error: booksError } = await supabase.from('books').upsert(booksForSupabase, { onConflict: 'id' })
-    if (booksError) console.error('Error syncing books:', booksError)
+    if (booksError) reportSyncError('Boeken synchroniseren mislukt', 'books', 'upsert')
   }
 
   // Sync chapters
   const localChapters = loadFromStorage<Chapter[]>(STORAGE_KEYS.chapters, [])
   if (localChapters.length > 0) {
     const { error: chaptersError } = await supabase.from('chapters').upsert(localChapters, { onConflict: 'id' })
-    if (chaptersError) console.error('Error syncing chapters:', chaptersError)
+    if (chaptersError) reportSyncError('Hoofdstukken synchroniseren mislukt', 'chapters', 'upsert')
   }
 
   // Sync recordings (without uploading audio - that would be too heavy)
   const localRecordings = loadFromStorage<Recording[]>(STORAGE_KEYS.recordings, [])
   if (localRecordings.length > 0) {
     const { error: recordingsError } = await supabase.from('recordings').upsert(localRecordings, { onConflict: 'id' })
-    if (recordingsError) console.error('Error syncing recordings:', recordingsError)
+    if (recordingsError) reportSyncError('Opnames synchroniseren mislukt', 'recordings', 'upsert')
   }
 
   console.log('Sync complete!')
@@ -1252,25 +1330,31 @@ export async function syncFromSupabase(): Promise<void> {
     console.log(`Processed pending operations: ${success} succeeded, ${failed} failed`)
   }
 
-  // Fetch books from Supabase - Supabase is source of truth
+  // Fetch books from Supabase - merge with local-only records
   const { data: remoteBooks } = await supabase.from('books').select('*')
   if (remoteBooks) {
-    // Use Supabase data directly (source of truth)
-    saveToStorage(STORAGE_KEYS.books, remoteBooks)
+    const localBooks = loadFromStorage<Book[]>(STORAGE_KEYS.books, [])
+    const remoteIds = new Set(remoteBooks.map(b => b.id))
+    const localOnly = localBooks.filter(b => !remoteIds.has(b.id))
+    saveToStorage(STORAGE_KEYS.books, [...remoteBooks, ...localOnly])
   }
 
-  // Fetch chapters from Supabase - Supabase is source of truth
+  // Fetch chapters from Supabase - merge with local-only records
   const { data: remoteChapters } = await supabase.from('chapters').select('*')
   if (remoteChapters) {
-    // Use Supabase data directly (source of truth)
-    saveToStorage(STORAGE_KEYS.chapters, remoteChapters)
+    const localChapters = loadFromStorage<Chapter[]>(STORAGE_KEYS.chapters, [])
+    const remoteIds = new Set(remoteChapters.map(c => c.id))
+    const localOnly = localChapters.filter(c => !remoteIds.has(c.id))
+    saveToStorage(STORAGE_KEYS.chapters, [...remoteChapters, ...localOnly])
   }
 
-  // Fetch recordings from Supabase - Supabase is source of truth
+  // Fetch recordings from Supabase - merge with local-only records
   const { data: remoteRecordings } = await supabase.from('recordings').select('*')
   if (remoteRecordings) {
-    // Use Supabase data directly (source of truth)
-    saveToStorage(STORAGE_KEYS.recordings, remoteRecordings)
+    const localRecordings = loadFromStorage<Recording[]>(STORAGE_KEYS.recordings, [])
+    const remoteIds = new Set(remoteRecordings.map(r => r.id))
+    const localOnly = localRecordings.filter(r => !remoteIds.has(r.id))
+    saveToStorage(STORAGE_KEYS.recordings, [...remoteRecordings, ...localOnly])
   }
 
   // Fetch users from Supabase

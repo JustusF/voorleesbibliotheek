@@ -46,6 +46,8 @@ export function AudioPlayer({
   const [isBuffering, setIsBuffering] = useState(false)
   const [hasError, setHasError] = useState(false)
   const [autoplayBlocked, setAutoplayBlocked] = useState(false)
+  const triedMimeFallback = useRef(false)
+  const fallbackObjectUrl = useRef<string | null>(null)
   const currentTimeRef = useRef(0)
   const [displayTime, setDisplayTime] = useState(0)
   const [duration, setDuration] = useState(recording.duration_seconds || 0)
@@ -207,6 +209,11 @@ export function AudioPlayer({
       lastSaveRef.current = 0
       currentTimeRef.current = 0
       setDisplayTime(0)
+      triedMimeFallback.current = false
+      if (fallbackObjectUrl.current) {
+        URL.revokeObjectURL(fallbackObjectUrl.current)
+        fallbackObjectUrl.current = null
+      }
     }
   }, [recording.id])
 
@@ -322,7 +329,30 @@ export function AudioPlayer({
       setIsBuffering(false)
       setIsLoading(false)
     }
-    const handleError = () => {
+    const handleError = async () => {
+      // Fallback: if audio fails (e.g. mp4 bytes served as audio/webm),
+      // fetch the file, detect real type from magic bytes, and retry with correct MIME
+      if (!triedMimeFallback.current && audio) {
+        triedMimeFallback.current = true
+        try {
+          const response = await fetch(recording.audio_url)
+          const blob = await response.blob()
+          const header = await blob.slice(0, 12).arrayBuffer()
+          const view = new Uint8Array(header)
+          // MP4 files have 'ftyp' at byte offset 4-7
+          const isMp4 = view[4] === 0x66 && view[5] === 0x74 && view[6] === 0x79 && view[7] === 0x70
+          if (isMp4) {
+            const correctedBlob = new Blob([blob], { type: 'audio/mp4' })
+            if (fallbackObjectUrl.current) URL.revokeObjectURL(fallbackObjectUrl.current)
+            fallbackObjectUrl.current = URL.createObjectURL(correctedBlob)
+            audio.src = fallbackObjectUrl.current
+            audio.load()
+            return // Don't set hasError — give it another chance
+          }
+        } catch (e) {
+          console.error('[AudioPlayer] MIME fallback failed:', e)
+        }
+      }
       setHasError(true)
       setIsLoading(false)
       setIsPlaying(false)
@@ -343,6 +373,10 @@ export function AudioPlayer({
       audio.removeEventListener('waiting', handleWaiting)
       audio.removeEventListener('canplay', handleCanPlay)
       audio.removeEventListener('error', handleError)
+      if (fallbackObjectUrl.current) {
+        URL.revokeObjectURL(fallbackObjectUrl.current)
+        fallbackObjectUrl.current = null
+      }
     }
   }, [chapter.id, recording.id, saveProgress, sleepTimer, playbackSpeed, duration])
 
