@@ -1177,6 +1177,33 @@ export function markChapterComplete(chapterId: string): void {
 // SYNC FUNCTIONS
 // ============================================
 
+// Push local-only records to Supabase before pulling (prevents data loss)
+async function pushLocalOnlyRecords(): Promise<void> {
+  if (!isSupabaseConfigured || !supabase) return
+
+  // Push books first (chapters and recordings depend on them)
+  const localBooks = loadFromStorage<Book[]>(STORAGE_KEYS.books, [])
+  if (localBooks.length > 0) {
+    const booksForSupabase = localBooks.map(({ author: _a, ...rest }) => rest)
+    const { error } = await supabase.from('books').upsert(booksForSupabase, { onConflict: 'id', ignoreDuplicates: true })
+    if (error) console.warn('Push local books:', error.message)
+  }
+
+  // Push chapters
+  const localChapters = loadFromStorage<Chapter[]>(STORAGE_KEYS.chapters, [])
+  if (localChapters.length > 0) {
+    const { error } = await supabase.from('chapters').upsert(localChapters, { onConflict: 'id', ignoreDuplicates: true })
+    if (error) console.warn('Push local chapters:', error.message)
+  }
+
+  // Push recordings
+  const localRecordings = loadFromStorage<Recording[]>(STORAGE_KEYS.recordings, [])
+  if (localRecordings.length > 0) {
+    const { error } = await supabase.from('recordings').upsert(localRecordings, { onConflict: 'id', ignoreDuplicates: true })
+    if (error) console.warn('Push local recordings:', error.message)
+  }
+}
+
 // Sync local data to Supabase (call this when coming online or on app start)
 export async function syncToSupabase(): Promise<void> {
   if (!isSupabaseConfigured || !supabase) return
@@ -1215,7 +1242,11 @@ export async function syncFromSupabase(): Promise<void> {
 
   console.log('Syncing from Supabase to local...')
 
-  // First, process any pending offline operations
+  // First, push any local-only records to Supabase before pulling
+  // This prevents data loss for records that were saved locally but never synced
+  await pushLocalOnlyRecords()
+
+  // Then, process any pending offline operations
   const { success, failed } = await processPendingOperations()
   if (success > 0 || failed > 0) {
     console.log(`Processed pending operations: ${success} succeeded, ${failed} failed`)
