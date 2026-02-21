@@ -86,10 +86,14 @@ export async function processPendingOperations(): Promise<{ success: number; fai
 
   for (const op of operations) {
     try {
+      // Strip 'author' from books — column not yet in Supabase schema
+      const data = op.table === 'books'
+        ? (({ author: _a, ...rest }: Record<string, unknown>) => rest)(op.data)
+        : op.data
       if (op.operation === 'insert') {
-        await supabase.from(op.table).insert(op.data)
+        await supabase.from(op.table).insert(data)
       } else if (op.operation === 'update') {
-        await supabase.from(op.table).update(op.data).eq('id', op.data.id)
+        await supabase.from(op.table).update(data).eq('id', op.data.id)
       } else if (op.operation === 'delete') {
         await supabase.from(op.table).delete().eq('id', op.data.id)
       }
@@ -213,9 +217,11 @@ export async function addBookAsync(title: string, author?: string, coverUrl?: st
   }
 
   if (isSupabaseConfigured && supabase) {
+    // Omit 'author' — column not yet in Supabase schema
+    const { author: _author, ...bookForSupabase } = newBook
     const { data, error } = await supabase
       .from('books')
-      .insert(newBook)
+      .insert(bookForSupabase)
       .select()
       .single()
     if (error) {
@@ -224,9 +230,9 @@ export async function addBookAsync(title: string, author?: string, coverUrl?: st
     }
     // Also save to localStorage for offline support
     const books = loadFromStorage<Book[]>(STORAGE_KEYS.books, [])
-    books.push(data)
+    books.push({ ...data, author: newBook.author })
     saveToStorage(STORAGE_KEYS.books, books)
-    return data
+    return { ...data, author: newBook.author }
   }
 
   const books = loadFromStorage<Book[]>(STORAGE_KEYS.books, [])
@@ -252,13 +258,15 @@ export function addBook(title: string, author?: string, coverUrl?: string): Book
 
   // Save to Supabase asynchronously, queue if fails
   if (isSupabaseConfigured && supabase) {
-    supabase.from('books').insert(newBook).then(({ error }) => {
+    // Omit 'author' — column not yet in Supabase schema
+    const { author: _author, ...bookForSupabase } = newBook
+    supabase.from('books').insert(bookForSupabase).then(({ error }) => {
       if (error) {
         console.error('Error syncing book to Supabase:', error)
         addPendingOperation({
           table: 'books',
           operation: 'insert',
-          data: newBook as unknown as Record<string, unknown>,
+          data: bookForSupabase as unknown as Record<string, unknown>,
         })
       }
     })
@@ -298,7 +306,9 @@ export function updateBook(id: string, updates: Partial<Book>): Book | null {
   saveToStorage(STORAGE_KEYS.books, books)
 
   if (isSupabaseConfigured && supabase) {
-    supabase.from('books').update(updates).eq('id', id).then(({ error }) => {
+    // Omit 'author' — column not yet in Supabase schema
+    const { author: _a, ...updatesForSupabase } = updates
+    supabase.from('books').update(updatesForSupabase).eq('id', id).then(({ error }) => {
       if (error) {
         console.error('Error syncing book update to Supabase:', error)
         addPendingOperation({
@@ -679,17 +689,23 @@ export async function addRecordingAsync(
     created_at: new Date().toISOString(),
   }
 
-  if (isSupabaseConfigured && supabase) {
-    const { error } = await supabase.from('recordings').insert(newRecording)
-    if (error) {
-      console.error('Error adding recording to Supabase:', error)
-      throw new Error(`Opname opslaan mislukt: ${error.message}`)
-    }
-  }
-
+  // Save to localStorage first so recording is never lost
   const recordings = loadFromStorage<Recording[]>(STORAGE_KEYS.recordings, [])
   recordings.push(newRecording)
   saveToStorage(STORAGE_KEYS.recordings, recordings)
+
+  // Sync to Supabase (non-blocking — localStorage is source of truth)
+  if (isSupabaseConfigured && supabase) {
+    const { error } = await supabase.from('recordings').insert(newRecording)
+    if (error) {
+      console.error('Error syncing recording to Supabase (saved locally):', error)
+      addPendingOperation({
+        table: 'recordings',
+        operation: 'insert',
+        data: newRecording as unknown as Record<string, unknown>,
+      })
+    }
+  }
 
   return newRecording
 }
@@ -1167,10 +1183,11 @@ export async function syncToSupabase(): Promise<void> {
 
   console.log('Syncing local data to Supabase...')
 
-  // Sync books
+  // Sync books (omit 'author' — column not yet in Supabase schema)
   const localBooks = loadFromStorage<Book[]>(STORAGE_KEYS.books, [])
   if (localBooks.length > 0) {
-    const { error: booksError } = await supabase.from('books').upsert(localBooks, { onConflict: 'id' })
+    const booksForSupabase = localBooks.map(({ author: _a, ...rest }) => rest)
+    const { error: booksError } = await supabase.from('books').upsert(booksForSupabase, { onConflict: 'id' })
     if (booksError) console.error('Error syncing books:', booksError)
   }
 
