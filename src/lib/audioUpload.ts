@@ -37,8 +37,9 @@ const DEFAULT_CONFIG: AudioValidationConfig = {
     'audio/x-m4a',
     'audio/ogg',
     'audio/webm',
+    'video/mp4',
   ],
-  allowedExtensions: ['.mp3', '.wav', '.m4a', '.ogg', '.webm'],
+  allowedExtensions: ['.mp3', '.wav', '.m4a', '.ogg', '.webm', '.mp4'],
 }
 
 /**
@@ -71,7 +72,7 @@ function validateAudioFile(
   if (!mimeTypeValid && !extensionValid) {
     return {
       valid: false,
-      error: 'Dit bestandstype wordt niet ondersteund. Gebruik MP3, WAV, M4A, OGG of WebM.',
+      error: 'Dit bestandstype wordt niet ondersteund. Gebruik MP3, MP4, WAV, M4A, OGG of WebM.',
     }
   }
 
@@ -79,11 +80,15 @@ function validateAudioFile(
 }
 
 /**
- * Detect actual audio duration using Audio element
+ * Detect actual media duration using Audio or Video element
  */
 async function detectAudioDuration(file: File): Promise<number> {
+  const isVideo = file.type.startsWith('video/') || /\.mp4$/i.test(file.name)
+
   return new Promise((resolve, reject) => {
-    const audio = new Audio()
+    const media = isVideo
+      ? document.createElement('video')
+      : new Audio()
     const objectUrl = URL.createObjectURL(file)
 
     // Set timeout to prevent hanging
@@ -92,12 +97,12 @@ async function detectAudioDuration(file: File): Promise<number> {
       reject(new Error('Duration detection timeout'))
     }, 10000) // 10 second timeout
 
-    audio.onloadedmetadata = () => {
+    media.onloadedmetadata = () => {
       clearTimeout(timeout)
       URL.revokeObjectURL(objectUrl)
 
       // Round to nearest second
-      const duration = Math.round(audio.duration)
+      const duration = Math.round(media.duration)
 
       // Validate duration
       if (isNaN(duration) || duration <= 0) {
@@ -107,13 +112,13 @@ async function detectAudioDuration(file: File): Promise<number> {
       }
     }
 
-    audio.onerror = () => {
+    media.onerror = () => {
       clearTimeout(timeout)
       URL.revokeObjectURL(objectUrl)
-      reject(new Error('Failed to load audio metadata'))
+      reject(new Error('Failed to load media metadata'))
     }
 
-    audio.src = objectUrl
+    media.src = objectUrl
   })
 }
 

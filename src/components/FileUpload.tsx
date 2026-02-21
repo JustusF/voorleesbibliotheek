@@ -34,10 +34,10 @@ export function FileUpload({ onFileSelect, isUploading = false, uploadError = nu
     if (!file) return
 
     // Basic validation - check MIME type OR file extension
-    const hasAudioMimeType = file.type.startsWith('audio/')
-    const hasAudioExtension = /\.(mp3|wav|m4a|ogg|webm)$/i.test(file.name)
+    const hasMediaMimeType = file.type.startsWith('audio/') || file.type === 'video/mp4'
+    const hasMediaExtension = /\.(mp3|wav|m4a|ogg|webm|mp4)$/i.test(file.name)
 
-    if (!hasAudioMimeType && !hasAudioExtension) {
+    if (!hasMediaMimeType && !hasMediaExtension) {
       setValidationError('Dit bestandstype wordt niet ondersteund.')
       return
     }
@@ -52,10 +52,10 @@ export function FileUpload({ onFileSelect, isUploading = false, uploadError = nu
     if (!file) return
 
     // Basic validation - check MIME type OR file extension (iOS voice memos may have empty MIME type)
-    const hasAudioMimeType = file.type.startsWith('audio/')
-    const hasAudioExtension = /\.(mp3|wav|m4a|ogg|webm)$/i.test(file.name)
+    const hasMediaMimeType = file.type.startsWith('audio/') || file.type === 'video/mp4'
+    const hasMediaExtension = /\.(mp3|wav|m4a|ogg|webm|mp4)$/i.test(file.name)
 
-    if (!hasAudioMimeType && !hasAudioExtension) {
+    if (!hasMediaMimeType && !hasMediaExtension) {
       setValidationError('Dit bestandstype wordt niet ondersteund.')
       return
     }
@@ -82,7 +82,7 @@ export function FileUpload({ onFileSelect, isUploading = false, uploadError = nu
       <input
         ref={inputRef}
         type="file"
-        accept="audio/*,.m4a,.mp3,.wav,.ogg,.webm"
+        accept="audio/*,video/mp4,.m4a,.mp3,.wav,.ogg,.webm,.mp4"
         onChange={handleFileChange}
         className="hidden"
         disabled={isUploading}
@@ -143,7 +143,7 @@ export function FileUpload({ onFileSelect, isUploading = false, uploadError = nu
                 of klik om een bestand te kiezen
               </p>
               <p className="text-cocoa-light/60 text-xs mt-4">
-                MP3, WAV, M4A, OGG ondersteund
+                MP3, MP4, WAV, M4A, OGG ondersteund
               </p>
             </div>
           </motion.div>
