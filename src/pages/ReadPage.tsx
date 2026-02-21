@@ -398,11 +398,6 @@ export function ReadPage() {
     dispatch({ type: 'RESET_FOR_ANOTHER_CHAPTER' })
   }
 
-  // Start fresh with different book
-  const handleNewRecording = () => {
-    dispatch({ type: 'RESET_FOR_NEW_BOOK' })
-  }
-
   const getStepIndex = (s: Step): number => {
     const steps = ['reader', 'book', 'chapter', 'record']
     const index = steps.indexOf(s)
