@@ -8,6 +8,7 @@ import { getBooks, getBook, getUsers, addRecordingAsync, addBook, getOrCreateNex
 import { uploadAudioFile } from '../lib/audioUpload'
 import { checkAvailableStorage, type StorageCheckResult } from '../lib/storageSpaceCheck'
 import { checkChapterLock, acquireLock, releaseLock, type LockCheckResult } from '../lib/recordingLock'
+import { clearBackup } from '../lib/recordingBackup'
 import type { Book, Chapter, User, Recording } from '../types'
 
 type Step = 'reader' | 'book' | 'chapter' | 'record' | 'success'
@@ -284,6 +285,8 @@ export function ReadPage() {
       // especially for large recordings (9+ minutes)
       await addRecordingAsync(currentChapter.id, selectedReader.id, blob, duration)
 
+      // Upload succeeded: clear the IndexedDB backup
+      await clearBackup()
       // Refresh reader's recordings for dashboard
       setReaderRecordings(getRecordingsForReader(selectedReader.id))
       // Release the lock after successful save
@@ -978,6 +981,8 @@ export function ReadPage() {
             <AudioRecorder
               onRecordingComplete={handleRecordingComplete}
               onCancel={handleCancelRecording}
+              chapterId={currentChapter?.id}
+              readerId={selectedReader?.id}
             />
 
             {/* Saving overlay */}

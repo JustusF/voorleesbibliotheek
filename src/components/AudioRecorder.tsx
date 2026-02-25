@@ -13,11 +13,13 @@ import {
 interface AudioRecorderProps {
   onRecordingComplete: (blob: Blob, duration: number) => void
   onCancel: () => void
+  chapterId?: string
+  readerId?: string
 }
 
 type RecordingState = 'idle' | 'requesting_permission' | 'permission_denied' | 'recording' | 'paused' | 'recorded' | 'playing'
 
-export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderProps) {
+export function AudioRecorder({ onRecordingComplete, onCancel, chapterId, readerId }: AudioRecorderProps) {
   const [state, setState] = useState<RecordingState>('idle')
   const [duration, setDuration] = useState(0)
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
@@ -106,7 +108,7 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
     setDuration(recoveredDuration)
     setShowRecovery(false)
     setState('recorded')
-    clearBackup()
+    // Backup stays until upload succeeds (cleared by ReadPage on success)
   }, [recoveredBlob, recoveredDuration])
 
   // Handle recovery: discard and start fresh
@@ -195,7 +197,7 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
       const sessionId = `rec-${Date.now()}`
       sessionIdRef.current = sessionId
       const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4'
-      await startBackupSession(sessionId, mimeType)
+      await startBackupSession(sessionId, mimeType, chapterId, readerId)
 
       // Create MediaRecorder with the processed (amplified) stream
       // Use timeslice of 10 seconds so chunks are saved incrementally
@@ -370,8 +372,7 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
 
   const confirmRecording = useCallback(() => {
     if (blobRef.current) {
-      // Clear backup on successful save
-      clearBackup()
+      // Backup stays until upload succeeds (cleared by caller on success)
       onRecordingComplete(blobRef.current, duration)
     }
   }, [duration, onRecordingComplete])
