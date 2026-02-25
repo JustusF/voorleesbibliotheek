@@ -173,3 +173,39 @@ $$ LANGUAGE plpgsql;
 -- ============================================
 -- ALTER TABLE books ADD COLUMN IF NOT EXISTS author TEXT;
 -- ALTER TABLE books ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+-- ============================================
+-- SECURITY MIGRATION v2: Restrict anon key to reads + allowed writes
+-- Run this section in Supabase SQL Editor after deploying api/admin-mutations.ts
+-- and setting ADMIN_SECRET + SUPABASE_SERVICE_KEY in Vercel env vars.
+-- ============================================
+
+-- Drop the catch-all permissive policies
+-- DROP POLICY IF EXISTS "Allow all access to users" ON users;
+-- DROP POLICY IF EXISTS "Allow all access to books" ON books;
+-- DROP POLICY IF EXISTS "Allow all access to chapters" ON chapters;
+-- DROP POLICY IF EXISTS "Allow all access to recordings" ON recordings;
+-- DROP POLICY IF EXISTS "Allow all access to progress" ON progress;
+-- DROP POLICY IF EXISTS "Allow all access to recording_locks" ON recording_locks;
+
+-- Users: read-only for anon (mutations go through service key via API route)
+-- CREATE POLICY "users_select" ON users FOR SELECT USING (family_id = '1');
+
+-- Books: read-only for anon
+-- CREATE POLICY "books_select" ON books FOR SELECT USING (family_id = '1');
+
+-- Chapters: read-only for anon
+-- CREATE POLICY "chapters_select" ON chapters FOR SELECT USING (true);
+
+-- Recordings: read + insert for anon (readers upload their own audio)
+-- CREATE POLICY "recordings_select" ON recordings FOR SELECT USING (true);
+-- CREATE POLICY "recordings_insert" ON recordings FOR INSERT WITH CHECK (true);
+
+-- Progress: full access for anon (listening progress tracking)
+-- CREATE POLICY "progress_all" ON progress FOR ALL USING (true) WITH CHECK (true);
+
+-- Recording locks: full access for anon (concurrent recording prevention)
+-- CREATE POLICY "recording_locks_all" ON recording_locks FOR ALL USING (true) WITH CHECK (true);
+
+-- Storage: remove anonymous UPDATE (no legitimate use case)
+-- DROP POLICY IF EXISTS "Allow public update to audio" ON storage.objects;

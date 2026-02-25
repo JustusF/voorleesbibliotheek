@@ -617,7 +617,8 @@ export async function replaceRecordingAsync(
   chapterId: string,
   readerId: string,
   audioData: string | Blob,
-  durationSeconds: number
+  durationSeconds: number,
+  onProgress?: (pct: number) => void
 ): Promise<Recording> {
   // 1. Find existing recording for this chapter + reader combination
   const existingRecording = getRecordingsForChapter(chapterId)
@@ -629,7 +630,7 @@ export async function replaceRecordingAsync(
   }
 
   // 3. Add new recording
-  return await addRecordingAsync(chapterId, readerId, audioData, durationSeconds)
+  return await addRecordingAsync(chapterId, readerId, audioData, durationSeconds, onProgress)
 }
 
 export function getRecordingsForReader(readerId: string): Recording[] {
@@ -638,7 +639,11 @@ export function getRecordingsForReader(readerId: string): Recording[] {
 
 // Upload audio to storage backend (R2 or Supabase)
 // Throws with a descriptive message if upload fails
-async function uploadAudioToStorage(audioBlob: Blob, recordingId: string): Promise<string> {
+async function uploadAudioToStorage(
+  audioBlob: Blob,
+  recordingId: string,
+  onProgress?: (pct: number) => void
+): Promise<string> {
   const backend = getStorageBackend()
 
   if (!backend.isConfigured()) {
@@ -646,7 +651,7 @@ async function uploadAudioToStorage(audioBlob: Blob, recordingId: string): Promi
   }
 
   console.log(`[Storage] Uploading to ${backend.name}...`)
-  const url = await backend.upload(recordingId, audioBlob)
+  const url = await backend.upload(recordingId, audioBlob, onProgress)
 
   if (!url) {
     throw new Error(`Upload naar ${backend.name} mislukt (geen URL ontvangen)`)
@@ -672,7 +677,8 @@ export async function addRecordingAsync(
   chapterId: string,
   readerId: string,
   audioData: string | Blob,
-  durationSeconds: number
+  durationSeconds: number,
+  onProgress?: (pct: number) => void
 ): Promise<Recording> {
   const recordingId = crypto.randomUUID()
   let audioUrl: string
@@ -685,7 +691,7 @@ export async function addRecordingAsync(
     // Try upload up to 2 times with a short delay between attempts
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
-        uploadedUrl = await uploadAudioToStorage(audioData, recordingId)
+        uploadedUrl = await uploadAudioToStorage(audioData, recordingId, onProgress)
         lastError = null
         break
       } catch (err) {

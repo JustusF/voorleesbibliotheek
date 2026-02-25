@@ -195,7 +195,7 @@ Geef ALLEEN de JSON array terug, geen andere tekst.`,
       JSON.stringify({
         success: false,
         chapters: [],
-        error: `Er ging iets mis: ${error instanceof Error ? error.message : 'Onbekende fout'}`,
+        error: 'Er ging iets mis. Probeer het opnieuw.',
       }),
       {
         status: 500,

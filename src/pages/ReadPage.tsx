@@ -103,6 +103,7 @@ export function ReadPage() {
 
   // Saving progress state
   const [isSaving, setIsSaving] = useState(false)
+  const [saveProgress, setSaveProgress] = useState(0)
 
   // New book author state
   const [newBookAuthor, setNewBookAuthor] = useState('')
@@ -279,11 +280,15 @@ export function ReadPage() {
     if (!currentChapter || !selectedReader) return
 
     setIsSaving(true)
+    setSaveProgress(0)
     try {
-      // Directly upload the blob to storage backend (R2 or Supabase)
-      // This is much more efficient than converting to base64 first,
-      // especially for large recordings (9+ minutes)
-      await addRecordingAsync(currentChapter.id, selectedReader.id, blob, duration)
+      await addRecordingAsync(
+        currentChapter.id,
+        selectedReader.id,
+        blob,
+        duration,
+        (pct) => setSaveProgress(pct)
+      )
 
       // Upload succeeded: clear the IndexedDB backup
       await clearBackup()
@@ -1000,7 +1005,20 @@ export function ReadPage() {
                     className="w-12 h-12 border-4 border-honey border-t-transparent rounded-full mb-4"
                   />
                   <p className="font-display text-xl text-cocoa">Opname opslaan...</p>
-                  <p className="text-cocoa-light text-sm mt-2">Even geduld, sluit dit scherm niet</p>
+                  {saveProgress > 0 && saveProgress < 100 ? (
+                    <div className="w-48 mt-3">
+                      <div className="w-full bg-cream-dark rounded-full h-2">
+                        <motion.div
+                          className="bg-honey h-2 rounded-full"
+                          animate={{ width: `${saveProgress}%` }}
+                          transition={{ duration: 0.3 }}
+                        />
+                      </div>
+                      <p className="text-cocoa-light text-sm mt-1 text-center">{saveProgress}%</p>
+                    </div>
+                  ) : (
+                    <p className="text-cocoa-light text-sm mt-2">Even geduld, sluit dit scherm niet</p>
+                  )}
                 </motion.div>
               )}
             </AnimatePresence>

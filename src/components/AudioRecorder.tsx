@@ -44,6 +44,7 @@ export function AudioRecorder({ onRecordingComplete, onCancel, chapterId, reader
   const sessionIdRef = useRef<string>('')
   const [audioLevels, setAudioLevels] = useState<number[]>(Array(20).fill(0))
   const [showRecordingFlash, setShowRecordingFlash] = useState(false)
+  const WARNING_DURATION = 45 * 60 // warn at 45 minutes
 
   // Check if microphone is available
   useEffect(() => {
@@ -447,6 +448,13 @@ export function AudioRecorder({ onRecordingComplete, onCancel, chapterId, reader
           {(state === 'recorded' || state === 'playing') && 'Beluister je opname hieronder'}
         </p>
       </div>
+
+      {/* Long-recording warning */}
+      {(state === 'recording' || state === 'paused') && duration >= WARNING_DURATION && (
+        <div className="mb-3 px-4 py-2 bg-honey/20 border border-honey/40 rounded-xl text-center text-sm text-cocoa">
+          Lange opname — je kunt tussentijds opslaan en daarna verdergaan
+        </div>
+      )}
 
       {/* Timer display */}
       <div className="flex justify-center mb-4" aria-live="polite" aria-atomic="true">

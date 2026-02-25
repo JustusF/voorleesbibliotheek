@@ -86,23 +86,21 @@ export default {
           })
         }
 
-        // Get the audio data from the request body
-        const audioData = await request.arrayBuffer()
-
-        // Validate file size (max 100MB)
-        const maxSize = 100 * 1024 * 1024
-        if (audioData.byteLength > maxSize) {
-          return new Response(JSON.stringify({ error: 'File too large. Maximum 100MB.' }), {
+        // Check Content-Length before reading body (saves bandwidth on oversized files)
+        const maxSize = 300 * 1024 * 1024 // 300MB — ~5 hours at 128kbps
+        const contentLength = parseInt(request.headers.get('Content-Length') || '0')
+        if (contentLength > maxSize) {
+          return new Response(JSON.stringify({ error: `File too large (${Math.round(contentLength / 1024 / 1024)}MB). Maximum 300MB.` }), {
             status: 413,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           })
         }
 
-        // Upload to R2 with the actual content type from the request
+        // Stream request body directly to R2 — avoids buffering entire file in Worker memory
         const storageContentType = contentType.startsWith('audio/mp4') || contentType.startsWith('video/mp4')
           ? 'audio/mp4'
           : 'audio/webm'
-        await env.AUDIO_BUCKET.put(filename, audioData, {
+        await env.AUDIO_BUCKET.put(filename, request.body, {
           httpMetadata: {
             contentType: storageContentType,
           },

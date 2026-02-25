@@ -46,7 +46,7 @@ export interface AudioStorageBackend {
    * @param audioBlob - Audio data as Blob
    * @returns Public URL to access the audio, or null if upload failed
    */
-  upload(recordingId: string, audioBlob: Blob): Promise<string | null>
+  upload(recordingId: string, audioBlob: Blob, onProgress?: (pct: number) => void): Promise<string | null>
 
   /**
    * Delete audio from storage

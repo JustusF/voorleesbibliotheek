@@ -28,9 +28,14 @@ export class R2StorageBackend implements AudioStorageBackend {
   }
 
   /**
-   * Upload audio to R2 via Cloudflare Worker proxy
+   * Upload audio to R2 via Cloudflare Worker proxy.
+   * Uses XMLHttpRequest for upload progress events and a generous timeout.
    */
-  async upload(recordingId: string, audioBlob: Blob): Promise<string | null> {
+  async upload(
+    recordingId: string,
+    audioBlob: Blob,
+    onProgress?: (pct: number) => void
+  ): Promise<string | null> {
     if (!this.isConfigured()) {
       console.warn('[R2Storage] R2 niet geconfigureerd')
       return null
@@ -41,27 +46,32 @@ export class R2StorageBackend implements AudioStorageBackend {
     const sizeMB = (audioBlob.size / (1024 * 1024)).toFixed(1)
     console.log(`[R2Storage] Uploading ${fileName} (${sizeMB}MB, blob.type="${audioBlob.type}", contentType="${contentType}")`)
 
-    try {
-      const response = await fetch(`${this.workerUrl}/upload/${fileName}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': contentType,
-        },
-        body: audioBlob,
-      })
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      xhr.open('PUT', `${this.workerUrl}/upload/${fileName}`)
+      xhr.setRequestHeader('Content-Type', contentType)
+      // 15-minute timeout — handles very long recordings on slow connections
+      xhr.timeout = 15 * 60 * 1000
 
-      if (!response.ok) {
-        const errorText = await response.text()
-        console.error('[R2Storage] Upload error:', response.status, errorText)
-        throw new Error(`R2 upload mislukt (${response.status}): ${errorText}`)
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          onProgress?.(Math.round((e.loaded / e.total) * 100))
+        }
       }
 
-      // Return the public URL for the uploaded file
-      return `${this.publicUrl}/${fileName}`
-    } catch (error) {
-      if (error instanceof Error) throw error
-      throw new Error(`R2 upload mislukt: ${String(error)}`)
-    }
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(`${this.publicUrl}/${fileName}`)
+        } else {
+          reject(new Error(`R2 upload mislukt (${xhr.status}): ${xhr.responseText}`))
+        }
+      }
+
+      xhr.onerror = () => reject(new Error('Netwerkfout bij uploaden. Controleer je internetverbinding.'))
+      xhr.ontimeout = () => reject(new Error('Upload timeout (15 min overschreden). Probeer het opnieuw.'))
+
+      xhr.send(audioBlob)
+    })
   }
 
   /**
