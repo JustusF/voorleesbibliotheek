@@ -33,8 +33,8 @@ function getCorsHeaders(request: Request, env: Env): Record<string, string> {
 
 // Validate filename
 function isValidFilename(filename: string): boolean {
-  // Only allow .webm files with UUID-like names
-  const pattern = /^[a-f0-9-]+\.webm$/i
+  // Allow .webm (Android/desktop) and .mp4 (iOS) with UUID-like names
+  const pattern = /^[a-f0-9-]+\.(webm|mp4)$/i
   return pattern.test(filename)
 }
 
@@ -75,11 +75,12 @@ export default {
     try {
       // Handle upload
       if (request.method === 'PUT' && action === 'upload') {
-        const contentType = request.headers.get('Content-Type')
+        const contentType = request.headers.get('Content-Type') || ''
 
-        // Only allow audio/webm uploads
-        if (contentType !== 'audio/webm') {
-          return new Response(JSON.stringify({ error: 'Invalid content type. Expected audio/webm' }), {
+        // Allow audio/webm (Android/desktop) and audio/mp4 (iOS)
+        const allowedTypes = ['audio/webm', 'audio/mp4', 'video/mp4']
+        if (!allowedTypes.some((t) => contentType.startsWith(t))) {
+          return new Response(JSON.stringify({ error: `Invalid content type: ${contentType}. Expected audio/webm or audio/mp4` }), {
             status: 400,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           })
@@ -97,10 +98,13 @@ export default {
           })
         }
 
-        // Upload to R2
+        // Upload to R2 with the actual content type from the request
+        const storageContentType = contentType.startsWith('audio/mp4') || contentType.startsWith('video/mp4')
+          ? 'audio/mp4'
+          : 'audio/webm'
         await env.AUDIO_BUCKET.put(filename, audioData, {
           httpMetadata: {
-            contentType: 'audio/webm',
+            contentType: storageContentType,
           },
         })
 
@@ -160,10 +164,7 @@ export default {
       console.error('Worker error:', error)
 
       return new Response(
-        JSON.stringify({
-          error: 'Internal server error',
-          details: error instanceof Error ? error.message : 'Unknown error',
-        }),
+        JSON.stringify({ error: 'Internal server error' }),
         {
           status: 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
