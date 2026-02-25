@@ -143,8 +143,8 @@ export async function getRecoverableRecording(): Promise<{
 
     const meta = metas[0]
 
-    // Must have at least 1 chunk and be less than 24 hours old
-    if (meta.chunkCount === 0 || Date.now() - meta.startedAt > 24 * 60 * 60 * 1000) {
+    // Must have at least 1 chunk and be less than 7 days old
+    if (meta.chunkCount === 0 || Date.now() - meta.startedAt > 7 * 24 * 60 * 60 * 1000) {
       await clearBackup()
       db.close()
       return null

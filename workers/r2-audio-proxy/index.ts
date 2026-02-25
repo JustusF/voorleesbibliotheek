@@ -1,173 +1,142 @@
 /**
  * Cloudflare Worker - R2 Audio Proxy
  *
- * This worker acts as a secure proxy between the frontend app and R2 storage.
- * It handles CORS, validates requests, and provides upload/delete operations.
- *
  * Endpoints:
- * - PUT /upload/{filename} - Upload audio file to R2
- * - DELETE /delete/{filename} - Delete audio file from R2
- * - OPTIONS /* - Handle CORS preflight
+ *   PUT    /upload/{filename}                          - Single-shot upload (small files)
+ *   POST   /multipart/init/{filename}                  - Start multipart upload
+ *   PUT    /multipart/part/{filename}?uploadId=&partNumber= - Upload one part
+ *   POST   /multipart/complete/{filename}              - Assemble parts into final file
+ *   DELETE /multipart/abort/{filename}?uploadId=       - Abort and clean up
+ *   DELETE /delete/{filename}                          - Delete a file
  */
 
 export interface Env {
-  AUDIO_BUCKET: R2Bucket // R2 bucket binding
-  ALLOWED_ORIGINS: string // Comma-separated list of allowed origins
+  AUDIO_BUCKET: R2Bucket
+  ALLOWED_ORIGINS: string
 }
 
-// Helper to get CORS headers
-function getCorsHeaders(request: Request, env: Env): Record<string, string> {
+function getCorsHeaders(request: Request, env: Env): Record<string, string> | null {
   const origin = request.headers.get('Origin') || ''
   const allowedOrigins = env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
-
-  // Check if the origin is allowed
-  const allowedOrigin = allowedOrigins.includes(origin) ? origin : allowedOrigins[0]
-
+  if (!allowedOrigins.includes(origin)) return null
   return {
-    'Access-Control-Allow-Origin': allowedOrigin,
-    'Access-Control-Allow-Methods': 'GET, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Allow-Methods': 'GET, PUT, POST, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Max-Age': '86400', // 24 hours
+    'Access-Control-Max-Age': '86400',
   }
 }
 
-// Validate filename
+function json(data: unknown, status = 200, cors: Record<string, string>): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { ...cors, 'Content-Type': 'application/json' },
+  })
+}
+
 function isValidFilename(filename: string): boolean {
-  // Allow .webm (Android/desktop) and .mp4 (iOS) with UUID-like names
-  const pattern = /^[a-f0-9-]+\.(webm|mp4)$/i
-  return pattern.test(filename)
+  return /^[a-f0-9-]+\.(webm|mp4)$/i.test(filename)
+}
+
+function storageContentType(filename: string): string {
+  return filename.toLowerCase().endsWith('.mp4') ? 'audio/mp4' : 'audio/webm'
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url)
-    const corsHeaders = getCorsHeaders(request, env)
 
-    // Handle CORS preflight requests
+    // CORS preflight
     if (request.method === 'OPTIONS') {
-      return new Response(null, {
-        status: 204,
-        headers: corsHeaders,
-      })
+      const corsHeaders = getCorsHeaders(request, env)
+      if (!corsHeaders) return new Response(null, { status: 403 })
+      return new Response(null, { status: 204, headers: corsHeaders })
     }
 
-    const path = url.pathname
-    const pathParts = path.split('/').filter(Boolean)
+    const cors = getCorsHeaders(request, env)
+    if (!cors) return new Response(JSON.stringify({ error: 'Origin not allowed' }), { status: 403 })
 
-    // Validate path structure
-    if (pathParts.length !== 2) {
-      return new Response(JSON.stringify({ error: 'Invalid path' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
-    }
-
-    const [action, filename] = pathParts
-
-    // Validate filename
-    if (!isValidFilename(filename)) {
-      return new Response(JSON.stringify({ error: 'Invalid filename format' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
-    }
+    const pathParts = url.pathname.split('/').filter(Boolean)
 
     try {
-      // Handle upload
-      if (request.method === 'PUT' && action === 'upload') {
-        const contentType = request.headers.get('Content-Type') || ''
+      // ── Single-shot upload: PUT /upload/{filename} ──────────────────────
+      if (pathParts.length === 2 && pathParts[0] === 'upload' && request.method === 'PUT') {
+        const filename = pathParts[1]
+        if (!isValidFilename(filename)) return json({ error: 'Invalid filename' }, 400, cors)
 
-        // Allow audio/webm (Android/desktop) and audio/mp4 (iOS)
-        const allowedTypes = ['audio/webm', 'audio/mp4', 'video/mp4']
-        if (!allowedTypes.some((t) => contentType.startsWith(t))) {
-          return new Response(JSON.stringify({ error: `Invalid content type: ${contentType}. Expected audio/webm or audio/mp4` }), {
-            status: 400,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          })
-        }
-
-        // Check Content-Length before reading body (saves bandwidth on oversized files)
-        const maxSize = 300 * 1024 * 1024 // 300MB — ~5 hours at 128kbps
+        const maxBytes = 300 * 1024 * 1024
         const contentLength = parseInt(request.headers.get('Content-Length') || '0')
-        if (contentLength > maxSize) {
-          return new Response(JSON.stringify({ error: `File too large (${Math.round(contentLength / 1024 / 1024)}MB). Maximum 300MB.` }), {
-            status: 413,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          })
+        if (contentLength > maxBytes) return json({ error: `Too large (max 300 MB)` }, 413, cors)
+
+        const contentType = request.headers.get('Content-Type') || ''
+        const allowed = ['audio/webm', 'audio/mp4', 'video/mp4']
+        if (!allowed.some((t) => contentType.startsWith(t))) {
+          return json({ error: `Invalid content type: ${contentType}` }, 400, cors)
         }
 
-        // Stream request body directly to R2 — avoids buffering entire file in Worker memory
-        const storageContentType = contentType.startsWith('audio/mp4') || contentType.startsWith('video/mp4')
-          ? 'audio/mp4'
-          : 'audio/webm'
         await env.AUDIO_BUCKET.put(filename, request.body, {
-          httpMetadata: {
-            contentType: storageContentType,
-          },
+          httpMetadata: { contentType: storageContentType(filename) },
         })
-
-        return new Response(
-          JSON.stringify({
-            success: true,
-            filename,
-            message: 'Audio uploaded successfully',
-          }),
-          {
-            status: 200,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          }
-        )
+        return json({ success: true, filename }, 200, cors)
       }
 
-      // Handle delete
-      if (request.method === 'DELETE' && action === 'delete') {
-        // Check if file exists first
-        const existingObject = await env.AUDIO_BUCKET.head(filename)
+      // ── Multipart endpoints: /multipart/{action}/{filename} ─────────────
+      if (pathParts.length === 3 && pathParts[0] === 'multipart') {
+        const [, action, filename] = pathParts
+        if (!isValidFilename(filename)) return json({ error: 'Invalid filename' }, 400, cors)
 
-        if (!existingObject) {
-          return new Response(
-            JSON.stringify({
-              success: true,
-              message: 'File does not exist (already deleted)',
-            }),
-            {
-              status: 200,
-              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            }
-          )
+        // Init: POST /multipart/init/{filename}
+        if (action === 'init' && request.method === 'POST') {
+          const mpu = await env.AUDIO_BUCKET.createMultipartUpload(filename, {
+            httpMetadata: { contentType: storageContentType(filename) },
+          })
+          return json({ uploadId: mpu.uploadId }, 200, cors)
         }
 
-        // Delete from R2
-        await env.AUDIO_BUCKET.delete(filename)
+        // Upload part: PUT /multipart/part/{filename}?uploadId=&partNumber=
+        if (action === 'part' && request.method === 'PUT') {
+          const uploadId = url.searchParams.get('uploadId')
+          const partNumber = parseInt(url.searchParams.get('partNumber') || '0')
+          if (!uploadId || !partNumber) return json({ error: 'Missing uploadId or partNumber' }, 400, cors)
 
-        return new Response(
-          JSON.stringify({
-            success: true,
-            filename,
-            message: 'Audio deleted successfully',
-          }),
-          {
-            status: 200,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          const mpu = env.AUDIO_BUCKET.resumeMultipartUpload(filename, uploadId)
+          const part = await mpu.uploadPart(partNumber, request.body!)
+          return json({ partNumber: part.partNumber, etag: part.etag }, 200, cors)
+        }
+
+        // Complete: POST /multipart/complete/{filename}
+        if (action === 'complete' && request.method === 'POST') {
+          const { uploadId, parts } = await request.json() as {
+            uploadId: string
+            parts: R2UploadedPart[]
           }
-        )
+          const mpu = env.AUDIO_BUCKET.resumeMultipartUpload(filename, uploadId)
+          await mpu.complete(parts)
+          return json({ success: true, filename }, 200, cors)
+        }
+
+        // Abort: DELETE /multipart/abort/{filename}?uploadId=
+        if (action === 'abort' && request.method === 'DELETE') {
+          const uploadId = url.searchParams.get('uploadId')
+          if (!uploadId) return json({ error: 'Missing uploadId' }, 400, cors)
+          const mpu = env.AUDIO_BUCKET.resumeMultipartUpload(filename, uploadId)
+          await mpu.abort()
+          return json({ success: true }, 200, cors)
+        }
       }
 
-      // Unknown action/method combination
-      return new Response(JSON.stringify({ error: 'Method not allowed' }), {
-        status: 405,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
+      // ── Delete: DELETE /delete/{filename} ───────────────────────────────
+      if (pathParts.length === 2 && pathParts[0] === 'delete' && request.method === 'DELETE') {
+        const filename = pathParts[1]
+        if (!isValidFilename(filename)) return json({ error: 'Invalid filename' }, 400, cors)
+        await env.AUDIO_BUCKET.delete(filename)
+        return json({ success: true }, 200, cors)
+      }
+
+      return json({ error: 'Not found' }, 404, cors)
     } catch (error) {
       console.error('Worker error:', error)
-
-      return new Response(
-        JSON.stringify({ error: 'Internal server error' }),
-        {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
-      )
+      return json({ error: `Internal server error: ${error instanceof Error ? error.message : String(error)}` }, 500, cors)
     }
   },
 }
