@@ -21,18 +21,34 @@ export class SupabaseStorageBackend implements AudioStorageBackend {
 
     const { extension, contentType } = getAudioFileInfo(audioBlob)
     const fileName = `${recordingId}${extension}`
+    const sizeMB = (audioBlob.size / (1024 * 1024)).toFixed(1)
+    console.log(`[SupabaseStorage] Uploading ${fileName} (${sizeMB}MB, ${contentType})`)
 
     try {
-      const { data, error } = await supabase.storage
+      // Timeout: 3 minutes for large files on mobile
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 3 * 60 * 1000)
+
+      const uploadPromise = supabase.storage
         .from('audio')
         .upload(fileName, audioBlob, {
           contentType,
           upsert: true,
         })
 
+      const { data, error } = await Promise.race([
+        uploadPromise,
+        new Promise<never>((_, reject) =>
+          controller.signal.addEventListener('abort', () =>
+            reject(new Error('Upload timeout: bestand duurt te lang om te uploaden'))
+          )
+        ),
+      ]).finally(() => clearTimeout(timeoutId))
+
       if (error) {
-        console.error('[SupabaseStorage] Upload error:', error)
-        return null
+        console.error('[SupabaseStorage] Upload error:', error.message, error)
+        // Re-throw with the actual Supabase error message so callers can surface it
+        throw new Error(`Supabase upload mislukt: ${error.message}`)
       }
 
       const { data: urlData } = supabase.storage
@@ -41,8 +57,11 @@ export class SupabaseStorageBackend implements AudioStorageBackend {
 
       return urlData.publicUrl
     } catch (error) {
-      console.error('[SupabaseStorage] Unexpected upload error:', error)
-      return null
+      // Re-throw errors with meaningful messages so callers can surface them
+      if (error instanceof Error) {
+        throw error
+      }
+      throw new Error(`Upload mislukt: ${String(error)}`)
     }
   }
 

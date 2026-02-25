@@ -292,7 +292,8 @@ export function ReadPage() {
       dispatch({ type: 'SET_STEP', step: 'success' })
     } catch (error) {
       console.error('Fout bij opslaan opname:', error)
-      setSaveError('Er ging iets mis bij het opslaan van je opname. Probeer het opnieuw.')
+      const message = error instanceof Error ? error.message : 'Onbekende fout'
+      setSaveError(`Er ging iets mis bij het opslaan van je opname. ${message}`)
     } finally {
       setIsSaving(false)
     }

@@ -1,6 +1,7 @@
 import { supabase, isSupabaseConfigured as supabaseConfigured } from './supabase'
 import { getStorageBackend, isAnyStorageConfigured } from './storageBackend'
 import type { Book, Chapter, Recording, User } from '../types'
+import { adminApi, isAdminConfigured } from './adminApi'
 
 // Re-export for use in App.tsx
 export const isSupabaseConfigured = supabaseConfigured
@@ -113,7 +114,7 @@ function addPendingOperation(op: Omit<PendingOperation, 'id' | 'timestamp' | 're
 
 // Process pending operations when back online
 export async function processPendingOperations(): Promise<{ success: number; failed: number }> {
-  if (!isSupabaseConfigured || !supabase) return { success: 0, failed: 0 }
+  if (!isSupabaseConfigured || !isAdminConfigured) return { success: 0, failed: 0 }
 
   const operations = getPendingOperations()
   const now = Date.now()
@@ -149,14 +150,11 @@ export async function processPendingOperations(): Promise<{ success: number; fai
         ? (({ author: _a, ...rest }: Record<string, unknown>) => rest)(op.data)
         : op.data
       if (op.operation === 'insert') {
-        const { error } = await supabase.from(op.table).upsert(data)
-        if (error) throw error
+        await adminApi.upsert(op.table, data as Record<string, unknown>)
       } else if (op.operation === 'update') {
-        const { error } = await supabase.from(op.table).update(data).eq('id', op.data.id)
-        if (error) throw error
+        await adminApi.update(op.table, op.data.id as string, data as Record<string, unknown>)
       } else if (op.operation === 'delete') {
-        const { error } = await supabase.from(op.table).delete().eq('id', op.data.id)
-        if (error) throw error
+        await adminApi.delete(op.table, op.data.id as string)
       }
       success++
     } catch (error) {
@@ -282,18 +280,10 @@ export async function addBookAsync(title: string, author?: string, coverUrl?: st
     created_at: new Date().toISOString(),
   }
 
-  if (isSupabaseConfigured && supabase) {
+  if (isSupabaseConfigured && isAdminConfigured) {
     // Omit 'author' — column not yet in Supabase schema
     const { author: _author, ...bookForSupabase } = newBook
-    const { data, error } = await supabase
-      .from('books')
-      .insert(bookForSupabase)
-      .select()
-      .single()
-    if (error) {
-      console.error('Error adding book:', error)
-      throw error
-    }
+    const data = await adminApi.insert('books', bookForSupabase as Record<string, unknown>) as Book
     // Also save to localStorage for offline support
     const books = loadFromStorage<Book[]>(STORAGE_KEYS.books, [])
     books.push({ ...data, author: newBook.author })
@@ -323,18 +313,16 @@ export function addBook(title: string, author?: string, coverUrl?: string): Book
   saveToStorage(STORAGE_KEYS.books, books)
 
   // Save to Supabase asynchronously, queue if fails
-  if (isSupabaseConfigured && supabase) {
+  if (isSupabaseConfigured && isAdminConfigured) {
     // Omit 'author' — column not yet in Supabase schema
     const { author: _author, ...bookForSupabase } = newBook
-    supabase.from('books').insert(bookForSupabase).then(({ error }) => {
-      if (error) {
-        reportSyncError('Boek opslaan mislukt', 'books', 'insert')
-        addPendingOperation({
-          table: 'books',
-          operation: 'insert',
-          data: bookForSupabase as unknown as Record<string, unknown>,
-        })
-      }
+    adminApi.insert('books', bookForSupabase as Record<string, unknown>).catch((_err) => {
+      reportSyncError('Boek opslaan mislukt', 'books', 'insert')
+      addPendingOperation({
+        table: 'books',
+        operation: 'insert',
+        data: bookForSupabase as unknown as Record<string, unknown>,
+      })
     })
   }
 
@@ -342,17 +330,9 @@ export function addBook(title: string, author?: string, coverUrl?: string): Book
 }
 
 export async function updateBookAsync(id: string, updates: Partial<Book>): Promise<Book | null> {
-  if (isSupabaseConfigured && supabase) {
-    const { data, error } = await supabase
-      .from('books')
-      .update(updates)
-      .eq('id', id)
-      .select()
-      .single()
-    if (error) {
-      console.error('Error updating book:', error)
-      return null
-    }
+  if (isSupabaseConfigured && isAdminConfigured) {
+    const data = await adminApi.update('books', id, updates as Record<string, unknown>) as Book
+    if (!data) return null
     return data
   }
 
@@ -371,18 +351,16 @@ export function updateBook(id: string, updates: Partial<Book>): Book | null {
   books[index] = { ...books[index], ...updates }
   saveToStorage(STORAGE_KEYS.books, books)
 
-  if (isSupabaseConfigured && supabase) {
+  if (isSupabaseConfigured && isAdminConfigured) {
     // Omit 'author' — column not yet in Supabase schema
     const { author: _a, ...updatesForSupabase } = updates
-    supabase.from('books').update(updatesForSupabase).eq('id', id).then(({ error }) => {
-      if (error) {
-        reportSyncError('Boek bijwerken mislukt', 'books', 'update')
-        addPendingOperation({
-          table: 'books',
-          operation: 'update',
-          data: { id, ...updates } as unknown as Record<string, unknown>,
-        })
-      }
+    adminApi.update('books', id, updatesForSupabase as Record<string, unknown>).catch((_err) => {
+      reportSyncError('Boek bijwerken mislukt', 'books', 'update')
+      addPendingOperation({
+        table: 'books',
+        operation: 'update',
+        data: { id, ...updates } as unknown as Record<string, unknown>,
+      })
     })
   }
 
@@ -390,9 +368,8 @@ export function updateBook(id: string, updates: Partial<Book>): Book | null {
 }
 
 export async function deleteBookAsync(id: string): Promise<void> {
-  if (isSupabaseConfigured && supabase) {
-    const { error } = await supabase.from('books').delete().eq('id', id)
-    if (error) console.error('Error deleting book:', error)
+  if (isSupabaseConfigured && isAdminConfigured) {
+    await adminApi.delete('books', id)
   }
 
   const books = loadFromStorage<Book[]>(STORAGE_KEYS.books, []).filter(b => b.id !== id)
@@ -407,16 +384,14 @@ export function deleteBook(id: string): void {
   const chapters = loadFromStorage<Chapter[]>(STORAGE_KEYS.chapters, []).filter(c => c.book_id !== id)
   saveToStorage(STORAGE_KEYS.chapters, chapters)
 
-  if (isSupabaseConfigured && supabase) {
-    supabase.from('books').delete().eq('id', id).then(({ error }) => {
-      if (error) {
-        reportSyncError('Boek verwijderen mislukt', 'books', 'delete')
-        addPendingOperation({
-          table: 'books',
-          operation: 'delete',
-          data: { id },
-        })
-      }
+  if (isSupabaseConfigured && isAdminConfigured) {
+    adminApi.delete('books', id).catch((_err) => {
+      reportSyncError('Boek verwijderen mislukt', 'books', 'delete')
+      addPendingOperation({
+        table: 'books',
+        operation: 'delete',
+        data: { id },
+      })
     })
   }
 }
@@ -482,16 +457,8 @@ export async function addChapterAsync(bookId: string, chapterNumber: number, tit
     created_at: new Date().toISOString(),
   }
 
-  if (isSupabaseConfigured && supabase) {
-    const { data, error } = await supabase
-      .from('chapters')
-      .insert(newChapter)
-      .select()
-      .single()
-    if (error) {
-      console.error('Error adding chapter:', error)
-      throw error
-    }
+  if (isSupabaseConfigured && isAdminConfigured) {
+    const data = await adminApi.insert('chapters', newChapter as unknown as Record<string, unknown>) as Chapter
     const chapters = loadFromStorage<Chapter[]>(STORAGE_KEYS.chapters, [])
     chapters.push(data)
     saveToStorage(STORAGE_KEYS.chapters, chapters)
@@ -517,9 +484,9 @@ export function addChapter(bookId: string, chapterNumber: number, title: string)
   chapters.push(newChapter)
   saveToStorage(STORAGE_KEYS.chapters, chapters)
 
-  if (isSupabaseConfigured && supabase) {
-    supabase.from('chapters').insert(newChapter).then(({ error }) => {
-      if (error) reportSyncError('Hoofdstuk opslaan mislukt', 'chapters', 'insert')
+  if (isSupabaseConfigured && isAdminConfigured) {
+    adminApi.insert('chapters', newChapter as unknown as Record<string, unknown>).catch((_err) => {
+      reportSyncError('Hoofdstuk opslaan mislukt', 'chapters', 'insert')
     })
   }
 
@@ -538,9 +505,9 @@ export function addChapters(bookId: string, chapterTitles: string[]): Chapter[] 
   chapters.push(...newChapters)
   saveToStorage(STORAGE_KEYS.chapters, chapters)
 
-  if (isSupabaseConfigured && supabase) {
-    supabase.from('chapters').insert(newChapters).then(({ error }) => {
-      if (error) reportSyncError('Hoofdstukken opslaan mislukt', 'chapters', 'insert')
+  if (isSupabaseConfigured && isAdminConfigured) {
+    adminApi.insertMany('chapters', newChapters as unknown as Record<string, unknown>[]).catch((_err) => {
+      reportSyncError('Hoofdstukken opslaan mislukt', 'chapters', 'insert')
     })
   }
 
@@ -554,9 +521,9 @@ export function updateChapter(id: string, updates: Partial<Chapter>): Chapter | 
   chapters[index] = { ...chapters[index], ...updates }
   saveToStorage(STORAGE_KEYS.chapters, chapters)
 
-  if (isSupabaseConfigured && supabase) {
-    supabase.from('chapters').update(updates).eq('id', id).then(({ error }) => {
-      if (error) reportSyncError('Hoofdstuk bijwerken mislukt', 'chapters', 'update')
+  if (isSupabaseConfigured && isAdminConfigured) {
+    adminApi.update('chapters', id, updates as Record<string, unknown>).catch((_err) => {
+      reportSyncError('Hoofdstuk bijwerken mislukt', 'chapters', 'update')
     })
   }
 
@@ -572,13 +539,13 @@ export async function deleteChapterAsync(id: string): Promise<void> {
   const recordings = loadFromStorage<Recording[]>(STORAGE_KEYS.recordings, []).filter(r => r.chapter_id !== id)
   saveToStorage(STORAGE_KEYS.recordings, recordings)
 
-  if (isSupabaseConfigured && supabase) {
+  if (isSupabaseConfigured && isAdminConfigured) {
     // Delete recordings first, then chapter - await both for consistency
-    const { error: recError } = await supabase.from('recordings').delete().eq('chapter_id', id)
-    if (recError) console.error('Error deleting recordings for chapter from Supabase:', recError)
+    await adminApi.deleteWhere('recordings', 'chapter_id', id).catch((recErr) => {
+      console.error('Error deleting recordings for chapter from Supabase:', recErr)
+    })
 
-    const { error: chapError } = await supabase.from('chapters').delete().eq('id', id)
-    if (chapError) {
+    await adminApi.delete('chapters', id).catch((_chapErr) => {
       reportSyncError('Hoofdstuk verwijderen mislukt', 'chapters', 'delete')
       // Queue for retry later
       addPendingOperation({
@@ -586,7 +553,7 @@ export async function deleteChapterAsync(id: string): Promise<void> {
         operation: 'delete',
         data: { id },
       })
-    }
+    })
   }
 }
 
@@ -598,21 +565,19 @@ export function deleteChapter(id: string): void {
   const recordings = loadFromStorage<Recording[]>(STORAGE_KEYS.recordings, []).filter(r => r.chapter_id !== id)
   saveToStorage(STORAGE_KEYS.recordings, recordings)
 
-  if (isSupabaseConfigured && supabase) {
+  if (isSupabaseConfigured && isAdminConfigured) {
     // Delete recordings first, then chapter
-    supabase.from('recordings').delete().eq('chapter_id', id).then(({ error }) => {
-      if (error) reportSyncError('Opnames verwijderen mislukt', 'recordings', 'delete')
+    adminApi.deleteWhere('recordings', 'chapter_id', id).catch((_err) => {
+      reportSyncError('Opnames verwijderen mislukt', 'recordings', 'delete')
     })
-    supabase.from('chapters').delete().eq('id', id).then(({ error }) => {
-      if (error) {
-        reportSyncError('Hoofdstuk verwijderen mislukt', 'chapters', 'delete')
-        // Queue for retry later
-        addPendingOperation({
-          table: 'chapters',
-          operation: 'delete',
-          data: { id },
-        })
-      }
+    adminApi.delete('chapters', id).catch((_err) => {
+      reportSyncError('Hoofdstuk verwijderen mislukt', 'chapters', 'delete')
+      // Queue for retry later
+      addPendingOperation({
+        table: 'chapters',
+        operation: 'delete',
+        data: { id },
+      })
     })
   }
 }
@@ -672,23 +637,22 @@ export function getRecordingsForReader(readerId: string): Recording[] {
 }
 
 // Upload audio to storage backend (R2 or Supabase)
-async function uploadAudioToStorage(audioBlob: Blob, recordingId: string): Promise<string | null> {
+// Throws with a descriptive message if upload fails
+async function uploadAudioToStorage(audioBlob: Blob, recordingId: string): Promise<string> {
   const backend = getStorageBackend()
 
   if (!backend.isConfigured()) {
-    console.warn('[Storage] Geen storage backend geconfigureerd')
-    return null
+    throw new Error('Geen storage backend geconfigureerd')
   }
 
   console.log(`[Storage] Uploading to ${backend.name}...`)
   const url = await backend.upload(recordingId, audioBlob)
 
-  if (url) {
-    console.log(`[Storage] Upload succesvol naar ${backend.name}`)
-  } else {
-    console.error(`[Storage] Upload naar ${backend.name} mislukt`)
+  if (!url) {
+    throw new Error(`Upload naar ${backend.name} mislukt (geen URL ontvangen)`)
   }
 
+  console.log(`[Storage] Upload succesvol naar ${backend.name}`)
   return url
 }
 
@@ -715,18 +679,30 @@ export async function addRecordingAsync(
 
   // If audioData is a Blob and any storage backend is configured, upload to storage
   if (audioData instanceof Blob && isAnyStorageConfigured()) {
-    let uploadedUrl = await uploadAudioToStorage(audioData, recordingId)
-    // Retry once if first upload fails
-    if (!uploadedUrl) {
-      console.warn('[addRecordingAsync] First upload failed, retrying...')
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-      uploadedUrl = await uploadAudioToStorage(audioData, recordingId)
+    let lastError: Error | null = null
+    let uploadedUrl: string | null = null
+
+    // Try upload up to 2 times with a short delay between attempts
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        uploadedUrl = await uploadAudioToStorage(audioData, recordingId)
+        lastError = null
+        break
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err))
+        console.warn(`[addRecordingAsync] Upload attempt ${attempt} failed:`, lastError.message)
+        if (attempt < 2) {
+          await new Promise((resolve) => setTimeout(resolve, 2000))
+        }
+      }
     }
+
     if (uploadedUrl) {
       audioUrl = uploadedUrl
     } else if (audioData.size > 4 * 1024 * 1024) {
-      // >4MB won't fit in localStorage, throw instead of silent failure
-      throw new Error('Upload mislukt en opname is te groot voor lokale opslag. Probeer het opnieuw.')
+      // >4MB won't fit in localStorage — surface the actual error so the user knows what happened
+      const reason = lastError?.message ?? 'onbekende fout'
+      throw new Error(`Upload mislukt: ${reason}`)
     } else {
       // Small enough for base64 fallback
       audioUrl = await new Promise<string>((resolve) => {
@@ -828,10 +804,9 @@ export async function deleteRecordingAsync(id: string): Promise<void> {
     await deleteAudioFromStorage(id, recording?.audio_url)
   }
 
-  if (isSupabaseConfigured && supabase) {
+  if (isSupabaseConfigured && isAdminConfigured) {
     // Delete from database
-    const { error: dbError } = await supabase.from('recordings').delete().eq('id', id)
-    if (dbError) {
+    await adminApi.delete('recordings', id).catch((_dbErr) => {
       reportSyncError('Opname verwijderen mislukt', 'recordings', 'delete')
       // Queue for retry later
       addPendingOperation({
@@ -839,7 +814,7 @@ export async function deleteRecordingAsync(id: string): Promise<void> {
         operation: 'delete',
         data: { id },
       })
-    }
+    })
   }
 }
 
@@ -856,18 +831,16 @@ export function deleteRecording(id: string): void {
     })
   }
 
-  if (isSupabaseConfigured && supabase) {
+  if (isSupabaseConfigured && isAdminConfigured) {
     // Delete from database
-    supabase.from('recordings').delete().eq('id', id).then(({ error }) => {
-      if (error) {
-        reportSyncError('Opname verwijderen mislukt', 'recordings', 'delete')
-        // Queue for retry later
-        addPendingOperation({
-          table: 'recordings',
-          operation: 'delete',
-          data: { id },
-        })
-      }
+    adminApi.delete('recordings', id).catch((_err) => {
+      reportSyncError('Opname verwijderen mislukt', 'recordings', 'delete')
+      // Queue for retry later
+      addPendingOperation({
+        table: 'recordings',
+        operation: 'delete',
+        data: { id },
+      })
     })
   }
 }
@@ -935,9 +908,9 @@ export function addUser(name: string, role: 'reader' | 'admin' | 'listener' = 'r
   users.push(newUser)
   saveToStorage(STORAGE_KEYS.users, users)
 
-  if (isSupabaseConfigured && supabase) {
-    supabase.from('users').insert(newUser).then(({ error }) => {
-      if (error) reportSyncError('Gebruiker opslaan mislukt', 'users', 'insert')
+  if (isSupabaseConfigured && isAdminConfigured) {
+    adminApi.insert('users', newUser as unknown as Record<string, unknown>).catch((_err) => {
+      reportSyncError('Gebruiker opslaan mislukt', 'users', 'insert')
     })
   }
 
@@ -951,9 +924,9 @@ export function updateUser(id: string, updates: Partial<User>): User | null {
   users[index] = { ...users[index], ...updates }
   saveToStorage(STORAGE_KEYS.users, users)
 
-  if (isSupabaseConfigured && supabase) {
-    supabase.from('users').update(updates).eq('id', id).then(({ error }) => {
-      if (error) reportSyncError('Gebruiker bijwerken mislukt', 'users', 'update')
+  if (isSupabaseConfigured && isAdminConfigured) {
+    adminApi.update('users', id, updates as Record<string, unknown>).catch((_err) => {
+      reportSyncError('Gebruiker bijwerken mislukt', 'users', 'update')
     })
   }
 
@@ -964,9 +937,9 @@ export function deleteUser(id: string): void {
   const users = loadFromStorage<User[]>(STORAGE_KEYS.users, defaultUsers).filter(u => u.id !== id)
   saveToStorage(STORAGE_KEYS.users, users)
 
-  if (isSupabaseConfigured && supabase) {
-    supabase.from('users').delete().eq('id', id).then(({ error }) => {
-      if (error) reportSyncError('Gebruiker verwijderen mislukt', 'users', 'delete')
+  if (isSupabaseConfigured && isAdminConfigured) {
+    adminApi.delete('users', id).catch((_err) => {
+      reportSyncError('Gebruiker verwijderen mislukt', 'users', 'delete')
     })
   }
 }
@@ -1257,34 +1230,31 @@ export function markChapterComplete(chapterId: string): void {
 
 // Push local-only records to Supabase before pulling (prevents data loss)
 async function pushLocalOnlyRecords(): Promise<void> {
-  if (!isSupabaseConfigured || !supabase) return
+  if (!isSupabaseConfigured || !isAdminConfigured) return
 
   // Push books first (chapters and recordings depend on them)
   const localBooks = loadFromStorage<Book[]>(STORAGE_KEYS.books, [])
   if (localBooks.length > 0) {
     const booksForSupabase = localBooks.map(({ author: _a, ...rest }) => rest)
-    const { error } = await supabase.from('books').upsert(booksForSupabase, { onConflict: 'id', ignoreDuplicates: true })
-    if (error) console.warn('Push local books:', error.message)
+    await adminApi.upsertMany('books', booksForSupabase as unknown as Record<string, unknown>[]).catch((e) => console.warn('Push local books:', e))
   }
 
   // Push chapters
   const localChapters = loadFromStorage<Chapter[]>(STORAGE_KEYS.chapters, [])
   if (localChapters.length > 0) {
-    const { error } = await supabase.from('chapters').upsert(localChapters, { onConflict: 'id', ignoreDuplicates: true })
-    if (error) console.warn('Push local chapters:', error.message)
+    await adminApi.upsertMany('chapters', localChapters as unknown as Record<string, unknown>[]).catch((e) => console.warn('Push local chapters:', e))
   }
 
   // Push recordings
   const localRecordings = loadFromStorage<Recording[]>(STORAGE_KEYS.recordings, [])
   if (localRecordings.length > 0) {
-    const { error } = await supabase.from('recordings').upsert(localRecordings, { onConflict: 'id', ignoreDuplicates: true })
-    if (error) console.warn('Push local recordings:', error.message)
+    await adminApi.upsertMany('recordings', localRecordings as unknown as Record<string, unknown>[]).catch((e) => console.warn('Push local recordings:', e))
   }
 }
 
 // Sync local data to Supabase (call this when coming online or on app start)
 export async function syncToSupabase(): Promise<void> {
-  if (!isSupabaseConfigured || !supabase) return
+  if (!isSupabaseConfigured || !isAdminConfigured) return
 
   console.log('Syncing local data to Supabase...')
 
@@ -1292,22 +1262,22 @@ export async function syncToSupabase(): Promise<void> {
   const localBooks = loadFromStorage<Book[]>(STORAGE_KEYS.books, [])
   if (localBooks.length > 0) {
     const booksForSupabase = localBooks.map(({ author: _a, ...rest }) => rest)
-    const { error: booksError } = await supabase.from('books').upsert(booksForSupabase, { onConflict: 'id' })
-    if (booksError) reportSyncError('Boeken synchroniseren mislukt', 'books', 'upsert')
+    await adminApi.upsertMany('books', booksForSupabase as unknown as Record<string, unknown>[])
+      .catch(() => reportSyncError('Boeken synchroniseren mislukt', 'books', 'upsert'))
   }
 
   // Sync chapters
   const localChapters = loadFromStorage<Chapter[]>(STORAGE_KEYS.chapters, [])
   if (localChapters.length > 0) {
-    const { error: chaptersError } = await supabase.from('chapters').upsert(localChapters, { onConflict: 'id' })
-    if (chaptersError) reportSyncError('Hoofdstukken synchroniseren mislukt', 'chapters', 'upsert')
+    await adminApi.upsertMany('chapters', localChapters as unknown as Record<string, unknown>[])
+      .catch(() => reportSyncError('Hoofdstukken synchroniseren mislukt', 'chapters', 'upsert'))
   }
 
   // Sync recordings (without uploading audio - that would be too heavy)
   const localRecordings = loadFromStorage<Recording[]>(STORAGE_KEYS.recordings, [])
   if (localRecordings.length > 0) {
-    const { error: recordingsError } = await supabase.from('recordings').upsert(localRecordings, { onConflict: 'id' })
-    if (recordingsError) reportSyncError('Opnames synchroniseren mislukt', 'recordings', 'upsert')
+    await adminApi.upsertMany('recordings', localRecordings as unknown as Record<string, unknown>[])
+      .catch(() => reportSyncError('Opnames synchroniseren mislukt', 'recordings', 'upsert'))
   }
 
   console.log('Sync complete!')
