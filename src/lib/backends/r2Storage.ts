@@ -38,6 +38,8 @@ export class R2StorageBackend implements AudioStorageBackend {
 
     const { extension, contentType } = getAudioFileInfo(audioBlob)
     const fileName = `${recordingId}${extension}`
+    const sizeMB = (audioBlob.size / (1024 * 1024)).toFixed(1)
+    console.log(`[R2Storage] Uploading ${fileName} (${sizeMB}MB, blob.type="${audioBlob.type}", contentType="${contentType}")`)
 
     try {
       const response = await fetch(`${this.workerUrl}/upload/${fileName}`, {
@@ -51,14 +53,14 @@ export class R2StorageBackend implements AudioStorageBackend {
       if (!response.ok) {
         const errorText = await response.text()
         console.error('[R2Storage] Upload error:', response.status, errorText)
-        return null
+        throw new Error(`R2 upload mislukt (${response.status}): ${errorText}`)
       }
 
       // Return the public URL for the uploaded file
       return `${this.publicUrl}/${fileName}`
     } catch (error) {
-      console.error('[R2Storage] Unexpected upload error:', error)
-      return null
+      if (error instanceof Error) throw error
+      throw new Error(`R2 upload mislukt: ${String(error)}`)
     }
   }
 
