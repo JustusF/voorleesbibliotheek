@@ -32,28 +32,22 @@ const itemVariants = {
   visible: { opacity: 1, y: 0 },
 }
 
+function getInitialActiveListener(): User | null {
+  const storedId = getActiveListener()
+  if (!storedId) return null
+
+  return getUsers().find(u => u.id === storedId) || null
+}
+
 export function ListenPage() {
   const navigate = useNavigate()
-  const [activeListener, setActiveListenerState] = useState<User | null>(null)
-  const [viewMode, setViewMode] = useState<ViewMode>('listener-select')
+  const [activeListener, setActiveListenerState] = useState<User | null>(() => getInitialActiveListener())
+  const [viewMode, setViewMode] = useState<ViewMode>(() => activeListener ? 'books' : 'listener-select')
   const [selected, setSelected] = useState<SelectedState>({})
   const [books, setBooks] = useState<Book[]>(() => getBooks())
   const [users, setUsers] = useState<User[]>(() => getUsers())
   const [newChildName, setNewChildName] = useState('')
   const [showAddChild, setShowAddChild] = useState(false)
-
-  // Restore active listener from session
-  useEffect(() => {
-    const storedId = getActiveListener()
-    if (storedId) {
-      const allUsers = getUsers()
-      const listener = allUsers.find(u => u.id === storedId)
-      if (listener) {
-        setActiveListenerState(listener)
-        setViewMode('books')
-      }
-    }
-  }, [])
 
   // Refresh data when returning to page
   useEffect(() => {
@@ -1011,33 +1005,32 @@ export function ListenPage() {
             exit={{ y: 100, opacity: 0 }}
             className="fixed bottom-0 left-0 right-0 z-40 pb-[env(safe-area-inset-bottom)]"
           >
-            <button
-              onClick={handleResumeFromMiniPlayer}
-              className="w-full bg-white shadow-floating border-t border-cream-dark px-4 py-3 flex items-center gap-3 hover:bg-cream/50 transition-colors"
-            >
-              <div className="w-10 h-12 rounded-lg overflow-hidden flex-shrink-0">
-                {lastPlayed.book.cover_url ? (
-                  <img src={lastPlayed.book.cover_url} alt="" className="w-full h-full object-cover" />
-                ) : (
-                  <div className="w-full h-full bg-gradient-to-br from-honey to-honey-dark flex items-center justify-center text-white text-sm">
-                    📖
-                  </div>
-                )}
-              </div>
-              <div className="flex-1 min-w-0 text-left">
-                <p className="text-sm font-medium text-cocoa truncate">{lastPlayed.chapter.title}</p>
-                <p className="text-xs text-cocoa-light truncate">{lastPlayed.book.title} · {lastPlayed.reader.name}</p>
-              </div>
-              <div className="flex-shrink-0 w-10 h-10 rounded-full bg-sky flex items-center justify-center">
-                <svg className="w-5 h-5 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M8 5v14l11-7z" />
-                </svg>
-              </div>
+            <div className="w-full bg-white shadow-floating border-t border-cream-dark px-4 py-3 flex items-center gap-2">
               <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setLastPlayed(null)
-                }}
+                onClick={handleResumeFromMiniPlayer}
+                className="flex-1 min-w-0 flex items-center gap-3 text-left rounded-xl hover:bg-cream/50 transition-colors"
+              >
+                <div className="w-10 h-12 rounded-lg overflow-hidden flex-shrink-0">
+                  {lastPlayed.book.cover_url ? (
+                    <img src={lastPlayed.book.cover_url} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full bg-gradient-to-br from-honey to-honey-dark flex items-center justify-center text-white text-sm">
+                      📖
+                    </div>
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-cocoa truncate">{lastPlayed.chapter.title}</p>
+                  <p className="text-xs text-cocoa-light truncate">{lastPlayed.book.title} · {lastPlayed.reader.name}</p>
+                </div>
+                <div className="flex-shrink-0 w-10 h-10 rounded-full bg-sky flex items-center justify-center">
+                  <svg className="w-5 h-5 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M8 5v14l11-7z" />
+                  </svg>
+                </div>
+              </button>
+              <button
+                onClick={() => setLastPlayed(null)}
                 className="flex-shrink-0 p-2 text-cocoa-light hover:text-cocoa"
                 aria-label="Sluiten"
               >
@@ -1045,7 +1038,7 @@ export function ListenPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
-            </button>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

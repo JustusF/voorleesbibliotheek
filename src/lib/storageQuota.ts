@@ -23,7 +23,7 @@ export function getStorageUsage(): StorageQuotaInfo {
 
   try {
     for (const key in localStorage) {
-      if (localStorage.hasOwnProperty(key)) {
+      if (Object.prototype.hasOwnProperty.call(localStorage, key)) {
         // Count key + value size
         totalBytes += key.length + (localStorage[key]?.length || 0)
       }
@@ -104,7 +104,7 @@ export function cleanupOldRecordings(targetMB: number = 2): number {
     const recordingsJson = localStorage.getItem('recordings')
     if (!recordingsJson) return 0
 
-    let recordings = JSON.parse(recordingsJson)
+    const recordings = JSON.parse(recordingsJson)
     if (!Array.isArray(recordings)) return 0
 
     const targetBytes = targetMB * 1024 * 1024

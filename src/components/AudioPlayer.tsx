@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from './ui'
@@ -146,6 +147,16 @@ export function AudioPlayer({
     }
   }, [])
 
+  const skipForward = useCallback(() => {
+    if (!audioRef.current) return
+    audioRef.current.currentTime = Math.min(audioRef.current.currentTime + 15, duration)
+  }, [duration])
+
+  const skipBackward = useCallback(() => {
+    if (!audioRef.current) return
+    audioRef.current.currentTime = Math.max(audioRef.current.currentTime - 15, 0)
+  }, [])
+
   // Media Session API for lockscreen controls
   useEffect(() => {
     if (!('mediaSession' in navigator)) return
@@ -180,7 +191,7 @@ export function AudioPlayer({
       navigator.mediaSession.setActionHandler('previoustrack', null)
       navigator.mediaSession.setActionHandler('nexttrack', null)
     }
-  }, [chapter.title, reader.name, book.title, book.cover_url, onNext, onPrevious])
+  }, [chapter.title, reader.name, book.title, book.cover_url, onNext, onPrevious, skipBackward, skipForward])
 
   // Track if we should auto-play when chapter changes
   useEffect(() => {
@@ -378,7 +389,18 @@ export function AudioPlayer({
         fallbackObjectUrl.current = null
       }
     }
-  }, [chapter.id, recording.id, saveProgress, sleepTimer, playbackSpeed, duration])
+  }, [
+    chapter.id,
+    recording.id,
+    recording.audio_url,
+    saveProgress,
+    sleepTimer,
+    playbackSpeed,
+    duration,
+    chimeEnabled,
+    onNext,
+    startAutoPlayCountdown,
+  ])
 
   const togglePlay = () => {
     if (!audioRef.current || hasError) return
@@ -393,16 +415,6 @@ export function AudioPlayer({
         setIsPlaying(false)
       })
     }
-  }
-
-  const skipForward = () => {
-    if (!audioRef.current) return
-    audioRef.current.currentTime = Math.min(audioRef.current.currentTime + 15, duration)
-  }
-
-  const skipBackward = () => {
-    if (!audioRef.current) return
-    audioRef.current.currentTime = Math.max(audioRef.current.currentTime - 15, 0)
   }
 
   const retryLoad = () => {

@@ -1,10 +1,10 @@
-import { useState, useEffect, useReducer, useCallback } from 'react'
+import { useState, useEffect, useReducer, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import { Button, CloudDecoration, Avatar, Card, ConfirmDialog } from '../components/ui'
 import { AudioRecorder } from '../components/AudioRecorder'
 import { FileUpload } from '../components/FileUpload'
-import { getBooks, getBook, getUsers, addRecordingAsync, addBook, getOrCreateNextChapter, getChaptersForBook, getRecordingsForChapter, updateChapter, getRecordingsForReader, getChapter } from '../lib/storage'
+import { getBooks, getBook, getUsers, addRecordingAsync, addBookAsync, getOrCreateNextChapterAsync, getChaptersForBook, getRecordingsForChapter, updateChapter, getRecordingsForReader, getChapter } from '../lib/storage'
 import { uploadAudioFile } from '../lib/audioUpload'
 import { checkAvailableStorage, type StorageCheckResult } from '../lib/storageSpaceCheck'
 import { checkChapterLock, acquireLock, releaseLock, type LockCheckResult } from '../lib/recordingLock'
@@ -125,6 +125,7 @@ export function ReadPage() {
   // Lock check state
   const [lockWarning, setLockWarning] = useState<LockCheckResult | null>(null)
   const [showLockWarning, setShowLockWarning] = useState(false)
+  const activeLockRef = useRef<{ chapterId: string; readerId: string } | null>(null)
 
   useEffect(() => {
     setBooks(getBooks())
@@ -145,6 +146,48 @@ export function ReadPage() {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
   }, [isSaving, handleBeforeUnload])
 
+  const releaseActiveLock = useCallback(async () => {
+    const lock = activeLockRef.current
+    if (!lock) return
+
+    activeLockRef.current = null
+    await releaseLock(lock.chapterId, lock.readerId)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      const lock = activeLockRef.current
+      if (!lock) return
+
+      activeLockRef.current = null
+      releaseLock(lock.chapterId, lock.readerId).catch((error) => {
+        console.error('Error releasing recording lock:', error)
+      })
+    }
+  }, [])
+
+  const ensureActiveLock = useCallback(async (chapter: Chapter, reader: User): Promise<boolean> => {
+    const existingLock = activeLockRef.current
+    if (existingLock?.chapterId === chapter.id && existingLock.readerId === reader.id) {
+      return true
+    }
+
+    if (existingLock) {
+      await releaseActiveLock()
+    }
+
+    const lockStatus = await checkChapterLock(chapter.id, reader.id)
+    if (lockStatus.isLocked) {
+      setLockWarning(lockStatus)
+      setShowLockWarning(true)
+      return false
+    }
+
+    await acquireLock(chapter.id, reader.id, reader.name)
+    activeLockRef.current = { chapterId: chapter.id, readerId: reader.id }
+    return true
+  }, [releaseActiveLock])
+
   const handleReaderSelect = (reader: User) => {
     setReaderRecordings(getRecordingsForReader(reader.id))
     dispatch({ type: 'SELECT_READER', reader })
@@ -159,16 +202,8 @@ export function ReadPage() {
   const handleChapterSelect = async (chapter: Chapter) => {
     if (!selectedReader) return
 
-    // First check if someone else is recording this chapter
-    const lockStatus = await checkChapterLock(chapter.id, selectedReader.id)
-    if (lockStatus.isLocked) {
-      setLockWarning(lockStatus)
-      setShowLockWarning(true)
-      return
-    }
-
-    // Acquire lock early (before overwrite dialog) to prevent race conditions
-    await acquireLock(chapter.id, selectedReader.id, selectedReader.name)
+    const hasLock = await ensureActiveLock(chapter, selectedReader)
+    if (!hasLock) return
 
     // Check if chapter already has recordings
     const existingRecordings = getRecordingsForChapter(chapter.id)
@@ -201,32 +236,34 @@ export function ReadPage() {
       setStorageCheck(result)
       if (result.canRecord) {
         dispatch({ type: 'SET_STEP', step: 'record' })
+      } else {
+        await releaseActiveLock()
       }
       // If can't record, the UI will show the warning
+    } catch (error) {
+      await releaseActiveLock()
+      throw error
     } finally {
       setIsCheckingStorage(false)
     }
   }
 
-  // Start recording or upload (lock already acquired in handleChapterSelect)
-  const handleStartRecording = (mode: 'record' | 'upload') => {
+  // Start recording or upload
+  const handleStartRecording = async (mode: 'record' | 'upload') => {
     if (!currentChapter || !selectedReader) return
+    const hasLock = await ensureActiveLock(currentChapter, selectedReader)
+    if (!hasLock) return
     dispatch({ type: 'SET_RECORD_MODE', mode })
   }
 
   // Release lock when canceling
   const handleCancelRecording = async () => {
-    if (currentChapter && selectedReader) {
-      await releaseLock(currentChapter.id, selectedReader.id)
-    }
+    await releaseActiveLock()
     dispatch({ type: 'SET_RECORD_MODE', mode: null })
   }
 
   const handleCancelOverwrite = async () => {
-    // Release lock since user cancelled the overwrite
-    if (pendingChapter && selectedReader) {
-      await releaseLock(pendingChapter.id, selectedReader.id)
-    }
+    await releaseActiveLock()
     setPendingChapter(null)
     setShowOverwriteConfirm(false)
   }
@@ -255,18 +292,18 @@ export function ReadPage() {
 
   const handleNewChapter = async () => {
     if (!selectedBook) return
-    const chapter = getOrCreateNextChapter(selectedBook.id)
+    const chapter = await getOrCreateNextChapterAsync(selectedBook.id)
     dispatch({ type: 'SET_CHAPTER', chapter })
     setBookChapters(getChaptersForBook(selectedBook.id))
     // Check storage before going to record step
     await checkStorageAndProceed()
   }
 
-  const handleCreateBook = () => {
+  const handleCreateBook = async () => {
     if (!newBookTitle.trim()) return
 
     // Create the book with optional author
-    const book = addBook(newBookTitle.trim(), newBookAuthor.trim() || undefined)
+    const book = await addBookAsync(newBookTitle.trim(), newBookAuthor.trim() || undefined)
 
     // Refresh books list and select the new book
     setBooks(getBooks())
@@ -278,6 +315,10 @@ export function ReadPage() {
 
   const handleRecordingComplete = async (blob: Blob, duration: number) => {
     if (!currentChapter || !selectedReader) return
+    if (!activeLockRef.current) {
+      const hasLock = await ensureActiveLock(currentChapter, selectedReader)
+      if (!hasLock) return
+    }
 
     setIsSaving(true)
     setSaveProgress(0)
@@ -295,13 +336,14 @@ export function ReadPage() {
       // Refresh reader's recordings for dashboard
       setReaderRecordings(getRecordingsForReader(selectedReader.id))
       // Release the lock after successful save
-      await releaseLock(currentChapter.id, selectedReader.id)
+      await releaseActiveLock()
       setSaveError(null)
       dispatch({ type: 'SET_STEP', step: 'success' })
     } catch (error) {
       console.error('Fout bij opslaan opname:', error)
       const message = error instanceof Error ? error.message : 'Onbekende fout'
       setSaveError(`Er ging iets mis bij het opslaan van je opname. ${message}`)
+      await releaseActiveLock()
     } finally {
       setIsSaving(false)
     }
@@ -309,6 +351,8 @@ export function ReadPage() {
 
   const handleFileUpload = async (file: File) => {
     if (!currentChapter || !selectedReader) return
+    const hasLock = await ensureActiveLock(currentChapter, selectedReader)
+    if (!hasLock) return
 
     // Reset upload state
     setUploadState({ isUploading: true, error: null, progress: 0 })
@@ -332,6 +376,7 @@ export function ReadPage() {
           error: result.message,
           progress: 0,
         })
+        await releaseActiveLock()
         return
       }
 
@@ -339,7 +384,7 @@ export function ReadPage() {
       setReaderRecordings(getRecordingsForReader(selectedReader.id))
       setUploadState({ isUploading: false, error: null, progress: 0 })
       // Release the lock after successful upload
-      await releaseLock(currentChapter.id, selectedReader.id)
+      await releaseActiveLock()
 
       // Brief delay before showing success to let user see the uploaded file
       setTimeout(() => dispatch({ type: 'SET_STEP', step: 'success' }), 500)
@@ -351,19 +396,23 @@ export function ReadPage() {
         error: 'Er ging iets mis bij het uploaden. Probeer het opnieuw.',
         progress: 0,
       })
+      await releaseActiveLock()
     }
   }
 
-  const handleBack = () => {
+  const handleBack = async () => {
     if (step === 'success') {
       dispatch({ type: 'BACK_TO_RECORD' })
     } else if (step === 'record') {
       if (recordMode) {
+        await releaseActiveLock()
         dispatch({ type: 'SET_RECORD_MODE', mode: null })
       } else {
+        await releaseActiveLock()
         dispatch({ type: 'BACK_TO_CHAPTER' })
       }
     } else if (step === 'chapter') {
+      await releaseActiveLock()
       setBookChapters([])
       dispatch({ type: 'BACK_TO_BOOK' })
     } else if (step === 'book') {
@@ -653,7 +702,7 @@ export function ReadPage() {
                     autoFocus
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && newBookTitle.trim()) {
-                        handleCreateBook()
+                        void handleCreateBook()
                       }
                     }}
                   />
@@ -671,7 +720,7 @@ export function ReadPage() {
                     className="w-full px-4 py-3 rounded-xl border-2 border-cream-dark focus:border-honey focus:outline-none transition-colors"
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && newBookTitle.trim()) {
-                        handleCreateBook()
+                        void handleCreateBook()
                       }
                     }}
                   />
@@ -1035,6 +1084,7 @@ export function ReadPage() {
           >
             <FileUpload
               onFileSelect={handleFileUpload}
+              onReset={() => setUploadState({ isUploading: false, error: null, progress: 0 })}
               isUploading={uploadState.isUploading}
               uploadError={uploadState.error}
               uploadProgress={uploadState.progress}

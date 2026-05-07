@@ -1,6 +1,8 @@
+/* eslint-disable react-refresh/only-export-components, react-hooks/set-state-in-effect */
 import { useState, useEffect, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
+import { startAdminSession } from '../../lib/adminApi'
 
 const ADMIN_PIN_KEY = 'voorleesbibliotheek_admin_pin'
 const ADMIN_SESSION_KEY = 'voorleesbibliotheek_admin_session'
@@ -155,6 +157,32 @@ export function PinGate({ onUnlock }: { onUnlock: () => void }) {
     onUnlock()
   }, [onUnlock])
 
+  const unlockWithServerSession = useCallback(async (validPin: string): Promise<boolean> => {
+    const result = await startAdminSession(validPin)
+
+    if (!result.success && result.code === 'UNAUTHORIZED') {
+      setError('Pincode klopt lokaal, maar niet op de server. Controleer ADMIN_PIN_HASH.')
+      setPin('')
+      setConfirmPin('')
+      setStep('enter')
+      return false
+    }
+
+    if (!result.success && result.code === 'RATE_LIMITED') {
+      setError(result.message || 'Te veel pogingen. Probeer later opnieuw.')
+      setPin('')
+      setConfirmPin('')
+      setStep('enter')
+      return false
+    }
+
+    // In local Vite dev or before server PIN setup, keep the local admin page
+    // usable. Privileged Supabase writes stay disabled until the server session
+    // can be created.
+    startSession()
+    return true
+  }, [startSession])
+
   const handlePinInput = async (digit: string) => {
     // Block input during lockout
     if (lockoutRemaining > 0) return
@@ -174,10 +202,12 @@ export function PinGate({ onUnlock }: { onUnlock: () => void }) {
         setError('')
         if (newConfirm.length === 4) {
           if (newConfirm === pin) {
-            // Hash the PIN before storing
-            const hashedPin = await hashPin(pin)
-            localStorage.setItem(ADMIN_PIN_KEY, hashedPin)
-            startSession()
+            const unlocked = await unlockWithServerSession(pin)
+            if (unlocked) {
+              // Hash the PIN before storing
+              const hashedPin = await hashPin(pin)
+              localStorage.setItem(ADMIN_PIN_KEY, hashedPin)
+            }
           } else {
             setError('Pincodes komen niet overeen')
             setPin('')
@@ -202,7 +232,7 @@ export function PinGate({ onUnlock }: { onUnlock: () => void }) {
           }
           // Clear rate limit on success
           setRateLimitState({ attempts: 0, firstAttemptTime: 0, lockoutUntil: null })
-          startSession()
+          await unlockWithServerSession(newPin)
         } else {
           const result = recordFailedAttempt()
           if (result.locked) {

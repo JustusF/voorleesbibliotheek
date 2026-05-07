@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { Button, Card, ConfirmDialog } from '../../components/ui'
 import {
@@ -39,11 +39,6 @@ export function BookManager({ users, onBooksChanged }: BookManagerProps) {
     onBooksChanged()
   }
 
-  // Refresh books when returning from child views
-  useEffect(() => {
-    setBooks(getBooks())
-  }, [selectedBook])
-
   const handleEditBook = (book: Book) => {
     setSelectedBook(book)
     setShowEditBook(true)
@@ -72,7 +67,10 @@ export function BookManager({ users, onBooksChanged }: BookManagerProps) {
       <ChapterList
         book={selectedBook}
         users={users}
-        onBack={() => setSelectedBook(null)}
+        onBack={() => {
+          setBooks(getBooks())
+          setSelectedBook(null)
+        }}
         onEditBook={handleEditBook}
       />
     )

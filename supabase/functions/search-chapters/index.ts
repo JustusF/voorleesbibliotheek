@@ -78,7 +78,7 @@ Het geheim ontrafeld`
       .split('\n')
       .map(line => line.trim())
       .filter(line => line.length > 0 && !line.toLowerCase().includes('hoofdstuk'))
-      .map(line => line.replace(/^\d+[\.\:\-\)\s]+/, '').trim()) // Remove any numbering
+      .map(line => line.replace(/^\d+[.:\s)-]+/, '').trim()) // Remove any numbering
       .filter(line => line.length > 0)
 
     return new Response(

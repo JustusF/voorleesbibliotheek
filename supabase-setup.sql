@@ -176,8 +176,9 @@ $$ LANGUAGE plpgsql;
 
 -- ============================================
 -- SECURITY MIGRATION v2: Restrict anon key to reads + allowed writes
--- Run this section in Supabase SQL Editor after deploying api/admin-mutations.ts
--- and setting ADMIN_SECRET + SUPABASE_SERVICE_KEY in Vercel env vars.
+-- Run this section in Supabase SQL Editor after deploying api/admin-session.ts
+-- + api/admin-mutations.ts and setting ADMIN_SECRET, ADMIN_PIN_HASH,
+-- and SUPABASE_SERVICE_KEY in Vercel env vars.
 -- ============================================
 
 -- Drop the catch-all permissive policies
@@ -188,14 +189,18 @@ $$ LANGUAGE plpgsql;
 -- DROP POLICY IF EXISTS "Allow all access to progress" ON progress;
 -- DROP POLICY IF EXISTS "Allow all access to recording_locks" ON recording_locks;
 
--- Users: read-only for anon (mutations go through service key via API route)
+-- Users: read + listener insert for anon (children can be added from the listening flow)
 -- CREATE POLICY "users_select" ON users FOR SELECT USING (family_id = '1');
+-- CREATE POLICY "users_insert_listener" ON users FOR INSERT WITH CHECK (family_id = '1' AND role = 'listener');
 
--- Books: read-only for anon
+-- Books: read + insert for anon (readers can add a missing book while recording)
 -- CREATE POLICY "books_select" ON books FOR SELECT USING (family_id = '1');
+-- CREATE POLICY "books_insert" ON books FOR INSERT WITH CHECK (family_id = '1');
 
--- Chapters: read-only for anon
+-- Chapters: read + insert/update for anon (readers can add or rename a chapter while recording)
 -- CREATE POLICY "chapters_select" ON chapters FOR SELECT USING (true);
+-- CREATE POLICY "chapters_insert" ON chapters FOR INSERT WITH CHECK (true);
+-- CREATE POLICY "chapters_update" ON chapters FOR UPDATE USING (true) WITH CHECK (true);
 
 -- Recordings: read + insert for anon (readers upload their own audio)
 -- CREATE POLICY "recordings_select" ON recordings FOR SELECT USING (true);

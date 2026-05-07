@@ -4,12 +4,13 @@ import { Button } from './ui'
 
 interface FileUploadProps {
   onFileSelect: (file: File) => void | Promise<void>
+  onReset?: () => void
   isUploading?: boolean
   uploadError?: string | null
   uploadProgress?: number
 }
 
-export function FileUpload({ onFileSelect, isUploading = false, uploadError = null, uploadProgress = 0 }: FileUploadProps) {
+export function FileUpload({ onFileSelect, onReset, isUploading = false, uploadError = null, uploadProgress = 0 }: FileUploadProps) {
   const [isDragging, setIsDragging] = useState(false)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [validationError, setValidationError] = useState<string | null>(null)
@@ -29,6 +30,7 @@ export function FileUpload({ onFileSelect, isUploading = false, uploadError = nu
     e.preventDefault()
     setIsDragging(false)
     setValidationError(null)
+    onReset?.()
 
     const file = e.dataTransfer.files[0]
     if (!file) return
@@ -43,10 +45,11 @@ export function FileUpload({ onFileSelect, isUploading = false, uploadError = nu
     }
 
     setSelectedFile(file)
-  }, [])
+  }, [onReset])
 
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setValidationError(null)
+    onReset?.()
 
     const file = e.target.files?.[0]
     if (!file) return
@@ -61,7 +64,7 @@ export function FileUpload({ onFileSelect, isUploading = false, uploadError = nu
     }
 
     setSelectedFile(file)
-  }, [])
+  }, [onReset])
 
   const handleConfirm = useCallback(() => {
     if (selectedFile) {
@@ -225,7 +228,10 @@ export function FileUpload({ onFileSelect, isUploading = false, uploadError = nu
             </div>
             {!isUploading && (
               <button
-                onClick={() => setSelectedFile(null)}
+                onClick={() => {
+                  setSelectedFile(null)
+                  onReset?.()
+                }}
                 className="w-10 h-10 rounded-full hover:bg-cream-dark flex items-center justify-center transition-colors"
               >
                 <svg className="w-5 h-5 text-cocoa-light" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -238,7 +244,10 @@ export function FileUpload({ onFileSelect, isUploading = false, uploadError = nu
           <div className="flex gap-3">
             <Button
               variant="ghost"
-              onClick={() => setSelectedFile(null)}
+              onClick={() => {
+                setSelectedFile(null)
+                onReset?.()
+              }}
               className="flex-1"
               disabled={isUploading}
             >
@@ -268,6 +277,21 @@ export function FileUpload({ onFileSelect, isUploading = false, uploadError = nu
               )}
             </Button>
           </div>
+
+          {uploadError && !isUploading && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mt-4 p-4 bg-red-50 border-2 border-red-200 rounded-[16px]"
+            >
+              <div className="flex items-start gap-3">
+                <svg className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <p className="text-sm text-red-800 font-medium flex-1">{uploadError}</p>
+              </div>
+            </motion.div>
+          )}
         </motion.div>
       )}
     </div>

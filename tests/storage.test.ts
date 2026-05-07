@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 
 // Mock Supabase (offline mode - no Supabase)
 vi.mock('../src/lib/supabase', () => ({

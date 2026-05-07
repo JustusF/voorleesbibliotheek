@@ -156,12 +156,8 @@ export async function uploadAudioFile(
     try {
       duration = await detectAudioDuration(file)
     } catch (error) {
-      console.error('Duration detection failed:', error)
-      return {
-        success: false,
-        error: 'DURATION_DETECTION_FAILED',
-        message: 'Kon de lengte van het audiobestand niet bepalen.',
-      }
+      console.warn('Duration detection failed, uploading with unknown duration:', error)
+      duration = 0
     }
 
     // Step 3: Replace existing or add new recording (prevents duplicates)
@@ -214,7 +210,9 @@ export async function uploadAudioFile(
       return {
         success: false,
         error: 'UPLOAD_FAILED',
-        message: 'Upload mislukt. Probeer het opnieuw.',
+        message: error instanceof Error
+          ? `Upload mislukt: ${error.message}`
+          : 'Upload mislukt. Probeer het opnieuw.',
       }
     }
   } catch (error) {

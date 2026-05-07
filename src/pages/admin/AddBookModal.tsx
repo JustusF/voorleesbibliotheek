@@ -166,7 +166,7 @@ function parseChaptersText(text: string): string[] {
     .filter(line => line.length > 0)
     .map(line => {
       return line
-        .replace(/^(\d+[\.\:\-\s]+|Hoofdstuk\s+\d+[\.\:\-\s]+)/i, '')
+        .replace(/^(\d+[.:\s-]+|Hoofdstuk\s+\d+[.:\s-]+)/i, '')
         .trim()
     })
 }
@@ -245,7 +245,7 @@ export function AddBookModal({ isOpen, onClose, onBookAdded }: AddBookModalProps
               return
             }
           }
-        } catch (error) {
+        } catch {
           console.log('Supabase function not available, falling back to manual search')
         }
       }

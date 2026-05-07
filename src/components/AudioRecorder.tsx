@@ -276,7 +276,7 @@ export function AudioRecorder({ onRecordingComplete, onCancel, chapterId, reader
         setPermissionError('Er ging iets mis. Probeer het opnieuw.')
       }
     }
-  }, [])
+  }, [chapterId, readerId])
 
   const stopRecording = useCallback(() => {
     if (mediaRecorderRef.current && (mediaRecorderRef.current.state === 'recording' || mediaRecorderRef.current.state === 'paused')) {
