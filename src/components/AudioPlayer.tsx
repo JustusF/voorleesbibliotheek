@@ -95,9 +95,13 @@ export function AudioPlayer({
     }))
 
   // Save progress periodically
+  // Reads the position from currentTimeRef, not from the <audio> element: this
+  // also runs as cleanup when the chapter changes, and by then the element
+  // already holds the next recording at 0:00. Reading the element reset the
+  // chapter that was just finished to "not started".
   const saveProgress = useCallback(() => {
-    if (audioRef.current && duration > 0) {
-      saveChapterProgress(chapter.id, recording.id, audioRef.current.currentTime, duration)
+    if (duration > 0 && Number.isFinite(duration) && currentTimeRef.current > 0) {
+      saveChapterProgress(chapter.id, recording.id, currentTimeRef.current, duration)
     }
   }, [chapter.id, recording.id, duration])
 
@@ -220,13 +224,14 @@ export function AudioPlayer({
       lastSaveRef.current = 0
       currentTimeRef.current = 0
       setDisplayTime(0)
+      setDuration(recording.duration_seconds || 0)
       triedMimeFallback.current = false
       if (fallbackObjectUrl.current) {
         URL.revokeObjectURL(fallbackObjectUrl.current)
         fallbackObjectUrl.current = null
       }
     }
-  }, [recording.id])
+  }, [recording.id, recording.duration_seconds])
 
   // Load saved progress on mount
   useEffect(() => {
@@ -308,8 +313,19 @@ export function AudioPlayer({
         lastSaveRef.current = audio.currentTime
       }
     }
+    // Recordings made in the browser (webm) carry no length in the file: the
+    // element reports Infinity until it has played to the end. Use the length
+    // stored with the recording until the real one is known.
+    const knownDuration = () =>
+      Number.isFinite(audio.duration) && audio.duration > 0
+        ? audio.duration
+        : recording.duration_seconds || 0
+    const handleDurationChange = () => {
+      const next = knownDuration()
+      if (next > 0) setDuration(next)
+    }
     const handleLoadedMetadata = () => {
-      setDuration(audio.duration)
+      setDuration(knownDuration())
       setIsLoading(false)
       setHasError(false)
       audio.playbackRate = playbackSpeed
@@ -322,7 +338,9 @@ export function AudioPlayer({
     }
     const handleEnded = () => {
       setIsPlaying(false)
-      saveChapterProgress(chapter.id, recording.id, audio.duration, audio.duration)
+      const total = Math.max(knownDuration(), audio.currentTime, 1)
+      currentTimeRef.current = total
+      saveChapterProgress(chapter.id, recording.id, total, total)
       // If sleep timer is "end of chapter", don't auto-play next
       if (sleepTimer === 'end_of_chapter') {
         setSleepTimer(null)
@@ -371,6 +389,7 @@ export function AudioPlayer({
 
     audio.addEventListener('timeupdate', handleTimeUpdate)
     audio.addEventListener('loadedmetadata', handleLoadedMetadata)
+    audio.addEventListener('durationchange', handleDurationChange)
     audio.addEventListener('ended', handleEnded)
     audio.addEventListener('waiting', handleWaiting)
     audio.addEventListener('canplay', handleCanPlay)
@@ -380,6 +399,7 @@ export function AudioPlayer({
       saveProgress()
       audio.removeEventListener('timeupdate', handleTimeUpdate)
       audio.removeEventListener('loadedmetadata', handleLoadedMetadata)
+      audio.removeEventListener('durationchange', handleDurationChange)
       audio.removeEventListener('ended', handleEnded)
       audio.removeEventListener('waiting', handleWaiting)
       audio.removeEventListener('canplay', handleCanPlay)
@@ -393,6 +413,7 @@ export function AudioPlayer({
     chapter.id,
     recording.id,
     recording.audio_url,
+    recording.duration_seconds,
     saveProgress,
     sleepTimer,
     playbackSpeed,

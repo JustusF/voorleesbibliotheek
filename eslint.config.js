@@ -6,7 +6,7 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  globalIgnores(['dist', 'dist-e2e', 'e2e/.cache', 'e2e/.report', 'e2e/.results']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [
@@ -19,5 +19,10 @@ export default defineConfig([
       ecmaVersion: 2020,
       globals: globals.browser,
     },
+  },
+  {
+    // Playwright-fixtures heten `use`; dat is geen React-hook
+    files: ['e2e/**/*.ts', 'playwright.config.ts'],
+    rules: { 'react-hooks/rules-of-hooks': 'off' },
   },
 ])

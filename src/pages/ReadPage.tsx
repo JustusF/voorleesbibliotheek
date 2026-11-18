@@ -7,8 +7,8 @@ import { FileUpload } from '../components/FileUpload'
 import { getBooks, getBook, getUsers, replaceRecordingAsync, addBookAsync, getOrCreateNextChapterAsync, getChaptersForBook, getRecordingsForChapter, updateChapter, getRecordingsForReader, getChapter } from '../lib/storage'
 import { uploadAudioFile } from '../lib/audioUpload'
 import { checkAvailableStorage, type StorageCheckResult } from '../lib/storageSpaceCheck'
-import { checkChapterLock, acquireLock, releaseLock, type LockCheckResult } from '../lib/recordingLock'
-import { clearBackup } from '../lib/recordingBackup'
+import { checkChapterLock, acquireLock, releaseLock, releaseLockOnPageHide, LOCK_RENEW_MS, type LockCheckResult } from '../lib/recordingLock'
+import { clearBackup, getRecoverableRecording } from '../lib/recordingBackup'
 import { chapterLink, getKnownReader, getLastBookForReader, rememberReader } from '../lib/resume'
 import type { Book, Chapter, User, Recording } from '../types'
 
@@ -39,6 +39,7 @@ type WizardAction =
   | { type: 'BACK_TO_RECORD' }
   | { type: 'RESET_FOR_NEW_BOOK' }
   | { type: 'RESET_FOR_ANOTHER_CHAPTER' }
+  | { type: 'RESUME_INTERRUPTED'; book: Book; chapter: Chapter }
 
 const initialWizardState: WizardState = {
   step: 'reader',
@@ -75,6 +76,8 @@ function wizardReducer(state: WizardState, action: WizardAction): WizardState {
       return { ...state, step: 'book', selectedBook: null, currentChapter: null, recordMode: null }
     case 'RESET_FOR_ANOTHER_CHAPTER':
       return { ...state, step: 'chapter', currentChapter: null, recordMode: null }
+    case 'RESUME_INTERRUPTED':
+      return { ...state, step: 'record', selectedBook: action.book, currentChapter: action.chapter, recordMode: 'record' }
     default:
       return state
   }
@@ -145,11 +148,57 @@ export function ReadPage() {
   // Lock check state
   const [lockWarning, setLockWarning] = useState<LockCheckResult | null>(null)
   const [showLockWarning, setShowLockWarning] = useState(false)
-  const activeLockRef = useRef<{ chapterId: string; readerId: string } | null>(null)
+  const [lockedChapter, setLockedChapter] = useState<Chapter | null>(null)
+  const activeLockRef = useRef<{ chapterId: string; readerId: string; readerName: string } | null>(null)
+
+  // Creating a book or chapter failed (no connection): say so on the spot
+  const [stepError, setStepError] = useState<string | null>(null)
+
+  // A recording that was cut off (tab closed, phone locked) and can be finished
+  const [interrupted, setInterrupted] = useState<{ book: Book; chapter: Chapter; seconds: number } | null>(null)
+  const [recoverOnMount, setRecoverOnMount] = useState(false)
 
   useEffect(() => {
     setBooks(getBooks())
     setUsers(getUsers())
+  }, [])
+
+  // Offer the cut-off recording on the chapter list, named by chapter. It used
+  // to pop up inside whatever chapter was opened next and was saved there.
+  useEffect(() => {
+    if (step !== 'chapter' || !selectedReader) return
+    let cancelled = false
+    getRecoverableRecording().then((found) => {
+      if (cancelled) return
+      const chapter = found?.meta.chapterId ? getChapter(found.meta.chapterId) : undefined
+      const book = chapter ? getBook(chapter.book_id) : undefined
+      if (found && chapter && book && found.meta.readerId === selectedReader.id) {
+        setInterrupted({ book, chapter, seconds: found.chunks.length * 10 })
+      } else {
+        setInterrupted(null)
+      }
+    })
+    return () => { cancelled = true }
+  }, [step, selectedReader])
+
+  // Keep the lock alive while this screen is open, and drop it when the tab
+  // goes away. Without this a closed tab kept the chapter locked.
+  useEffect(() => {
+    const renew = setInterval(() => {
+      const lock = activeLockRef.current
+      if (lock) void acquireLock(lock.chapterId, lock.readerId, lock.readerName)
+    }, LOCK_RENEW_MS)
+    const onPageHide = () => {
+      const lock = activeLockRef.current
+      if (!lock) return
+      activeLockRef.current = null
+      releaseLockOnPageHide(lock.chapterId, lock.readerId)
+    }
+    window.addEventListener('pagehide', onPageHide)
+    return () => {
+      clearInterval(renew)
+      window.removeEventListener('pagehide', onPageHide)
+    }
   }, [])
 
   // Prevent closing tab while saving
@@ -186,7 +235,9 @@ export function ReadPage() {
     }
   }, [])
 
-  const ensureActiveLock = useCallback(async (chapter: Chapter, reader: User): Promise<boolean> => {
+  // The lock is a heads-up, not a gate: two readers may both record a chapter
+  // (both takes are kept). `force` is the reader saying "I know, go on".
+  const ensureActiveLock = useCallback(async (chapter: Chapter, reader: User, force = false): Promise<boolean> => {
     const existingLock = activeLockRef.current
     if (existingLock?.chapterId === chapter.id && existingLock.readerId === reader.id) {
       return true
@@ -196,15 +247,18 @@ export function ReadPage() {
       await releaseActiveLock()
     }
 
-    const lockStatus = await checkChapterLock(chapter.id, reader.id)
-    if (lockStatus.isLocked) {
-      setLockWarning(lockStatus)
-      setShowLockWarning(true)
-      return false
+    if (!force) {
+      const lockStatus = await checkChapterLock(chapter.id, reader.id)
+      if (lockStatus.isLocked) {
+        setLockWarning(lockStatus)
+        setLockedChapter(chapter)
+        setShowLockWarning(true)
+        return false
+      }
     }
 
     await acquireLock(chapter.id, reader.id, reader.name)
-    activeLockRef.current = { chapterId: chapter.id, readerId: reader.id }
+    activeLockRef.current = { chapterId: chapter.id, readerId: reader.id, readerName: reader.name }
     return true
   }, [releaseActiveLock])
 
@@ -220,11 +274,12 @@ export function ReadPage() {
     dispatch({ type: 'SELECT_BOOK', book })
   }
 
-  const handleChapterSelect = async (chapter: Chapter) => {
+  const handleChapterSelect = async (chapter: Chapter, force = false) => {
     if (!selectedReader) return
 
-    const hasLock = await ensureActiveLock(chapter, selectedReader)
+    const hasLock = await ensureActiveLock(chapter, selectedReader, force)
     if (!hasLock) return
+    setRecoverOnMount(false)
 
     // Check if chapter already has recordings
     const existingRecordings = getRecordingsForChapter(chapter.id)
@@ -255,12 +310,12 @@ export function ReadPage() {
     try {
       const result = await checkAvailableStorage()
       setStorageCheck(result)
-      if (result.canRecord) {
-        dispatch({ type: 'SET_STEP', step: 'record' })
-      } else {
+      // Always go on: the record step explains why the buttons are disabled.
+      // Staying on the chapter list made the tap look like it did nothing.
+      dispatch({ type: 'SET_STEP', step: 'record' })
+      if (!result.canRecord) {
         await releaseActiveLock()
       }
-      // If can't record, the UI will show the warning
     } catch (error) {
       await releaseActiveLock()
       throw error
@@ -279,6 +334,9 @@ export function ReadPage() {
 
   // Release lock when canceling
   const handleCancelRecording = async () => {
+    // Cancel is deliberate: do not offer this take back later as "interrupted"
+    await clearBackup()
+    setRecoverOnMount(false)
     await releaseActiveLock()
     dispatch({ type: 'SET_RECORD_MODE', mode: null })
   }
@@ -313,18 +371,48 @@ export function ReadPage() {
 
   const handleNewChapter = async () => {
     if (!selectedBook) return
-    const chapter = await getOrCreateNextChapterAsync(selectedBook.id)
+    setStepError(null)
+    setRecoverOnMount(false)
+    let chapter: Chapter
+    try {
+      chapter = await getOrCreateNextChapterAsync(selectedBook.id)
+    } catch {
+      setStepError('Het nieuwe hoofdstuk kon niet worden aangemaakt. Controleer je internet en probeer het nog een keer.')
+      return
+    }
     dispatch({ type: 'SET_CHAPTER', chapter })
     setBookChapters(getChaptersForBook(selectedBook.id))
     // Check storage before going to record step
     await checkStorageAndProceed()
   }
 
+  // Pick up the recording that was cut off, in the chapter it belongs to
+  const handleResumeInterrupted = async () => {
+    if (!interrupted || !selectedReader) return
+    await ensureActiveLock(interrupted.chapter, selectedReader, true)
+    setBookChapters(getChaptersForBook(interrupted.book.id))
+    setRecoverOnMount(true)
+    dispatch({ type: 'RESUME_INTERRUPTED', book: interrupted.book, chapter: interrupted.chapter })
+    setInterrupted(null)
+  }
+
+  const handleDiscardInterrupted = async () => {
+    await clearBackup()
+    setInterrupted(null)
+  }
+
   const handleCreateBook = async () => {
     if (!newBookTitle.trim()) return
+    setStepError(null)
 
     // Create the book with optional author
-    const book = await addBookAsync(newBookTitle.trim(), newBookAuthor.trim() || undefined)
+    let book: Book
+    try {
+      book = await addBookAsync(newBookTitle.trim(), newBookAuthor.trim() || undefined)
+    } catch {
+      setStepError('Het boek kon niet worden opgeslagen. Controleer je internet en probeer het nog een keer.')
+      return
+    }
 
     // Refresh books list and select the new book
     setBooks(getBooks())
@@ -336,10 +424,8 @@ export function ReadPage() {
 
   const handleRecordingComplete = async (blob: Blob, duration: number) => {
     if (!currentChapter || !selectedReader) return
-    if (!activeLockRef.current) {
-      const hasLock = await ensureActiveLock(currentChapter, selectedReader)
-      if (!hasLock) return
-    }
+    // Saving a finished take is never held back by someone else's lock
+    await ensureActiveLock(currentChapter, selectedReader, true)
 
     setIsSaving(true)
     setSaveProgress(0)
@@ -363,9 +449,7 @@ export function ReadPage() {
       dispatch({ type: 'SET_STEP', step: 'success' })
     } catch (error) {
       console.error('Fout bij opslaan opname:', error)
-      const message = error instanceof Error ? error.message : 'Onbekende fout'
-      setSaveError(`Er ging iets mis bij het opslaan van je opname. ${message}`)
-      await releaseActiveLock()
+      setSaveError('Je opname is nog niet verstuurd. Controleer je internet en druk nog een keer op Opslaan. De opname blijft hier staan.')
     } finally {
       setIsSaving(false)
     }
@@ -373,8 +457,7 @@ export function ReadPage() {
 
   const handleFileUpload = async (file: File) => {
     if (!currentChapter || !selectedReader) return
-    const hasLock = await ensureActiveLock(currentChapter, selectedReader)
-    if (!hasLock) return
+    await ensureActiveLock(currentChapter, selectedReader, true)
 
     // Reset upload state
     setUploadState({ isUploading: true, error: null, progress: 0 })
@@ -522,7 +605,7 @@ export function ReadPage() {
         animate={{ opacity: 1, y: 0 }}
         className="flex items-center gap-4 mb-8 relative z-10"
       >
-        <Button variant="ghost" onClick={handleBack} className="!min-w-0 !min-h-0 p-4">
+        <Button variant="ghost" onClick={handleBack} aria-label="Terug" className="!min-w-0 !min-h-0 p-4">
           <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
@@ -585,6 +668,15 @@ export function ReadPage() {
             <span>Opnemen</span>
           </div>
         </motion.div>
+      )}
+
+      {stepError && (
+        <div role="alert" className="max-w-2xl mx-auto mb-4 p-4 bg-sunset/10 border-2 border-sunset/30 rounded-xl flex items-start gap-3 relative z-10">
+          <p className="flex-1 text-cocoa">{stepError}</p>
+          <button onClick={() => setStepError(null)} className="shrink-0 px-2 text-sm text-cocoa-light underline">
+            Sluiten
+          </button>
+        </div>
       )}
 
       <AnimatePresence mode="wait">
@@ -833,6 +925,25 @@ export function ReadPage() {
                 >
                   Ander boek
                 </button>
+              </div>
+            )}
+
+            {interrupted && (
+              <div className="mb-6 p-4 bg-honey/10 border-2 border-honey/40 rounded-[20px]">
+                <p className="font-display text-lg text-cocoa">Je vorige opname is niet opgeslagen</p>
+                <p className="text-cocoa-light mt-1">
+                  {interrupted.book.title}, hoofdstuk {interrupted.chapter.chapter_number}
+                  {/^hoofdstuk\s*\d+$/i.test(interrupted.chapter.title.trim()) ? '' : ` (${interrupted.chapter.title})`}
+                  : ongeveer {Math.max(1, Math.round(interrupted.seconds / 60))} min staat nog op dit apparaat.
+                </p>
+                <div className="flex flex-wrap gap-3 mt-3">
+                  <Button variant="primary" size="sm" onClick={handleResumeInterrupted}>
+                    Opname terughalen
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={handleDiscardInterrupted}>
+                    Weggooien
+                  </Button>
+                </div>
               </div>
             )}
 
@@ -1092,6 +1203,7 @@ export function ReadPage() {
               onCancel={handleCancelRecording}
               chapterId={currentChapter?.id}
               readerId={selectedReader?.id}
+              recoverOnMount={recoverOnMount}
             />
 
             {/* Saving overlay */}
@@ -1230,11 +1342,13 @@ export function ReadPage() {
       <ConfirmDialog
         isOpen={showLockWarning}
         onClose={() => setShowLockWarning(false)}
-        onConfirm={() => setShowLockWarning(false)}
+        onConfirm={() => {
+          if (lockedChapter) void handleChapterSelect(lockedChapter, true)
+        }}
         title="Hoofdstuk wordt al opgenomen"
-        message={lockWarning?.message || 'Iemand anders is dit hoofdstuk aan het opnemen.'}
-        confirmText="Oké, begrepen"
-        cancelText=""
+        message={`${lockWarning?.message || 'Iemand anders is dit hoofdstuk aan het opnemen.'} Je kunt een ander hoofdstuk kiezen, of het toch ook voorlezen: dan staan er straks twee opnames.`}
+        confirmText="Toch voorlezen"
+        cancelText="Ander hoofdstuk"
         variant="default"
       />
     </div>

@@ -44,7 +44,18 @@ npm run dev      # Start development server
 npm run build    # Build voor productie
 npm run lint     # ESLint check
 npm test         # Vitest
+npm run test:e2e # Playwright: hele app tegen een nagebouwde Supabase
 ```
+
+## E2E-tests
+
+`npm run test:e2e` bouwt de app naar `dist-e2e` en draait hem tegen `e2e/server/fake-supabase.mjs`: PostgREST en Storage in het geheugen, met het live schema en het rechtenmodel (anon verwijdert niets). Er gaat niets naar productie; een request naar `supabase.co` laat de test falen.
+
+- De microfoon is een ingesproken wav (`say`, stem Xander) die Chromium als nepapparaat afspeelt. Geüploade opnames worden met ffmpeg nagemeten op lengte en volume. Vereist `ffmpeg`.
+- Projecten: `desktop`, `telefoon` (390 px, aanraking, Chromium) en `safari` (WebKit, alleen luisteren: WebKit heeft in Playwright geen nepmicrofoon). Opnemen op een echte iPhone blijft een handtest.
+- Storingen inspuiten: `backend.rules([{ match: 'storage:upload', status: 500, times: 2 }])`.
+- Video's per test staan in `e2e/.results/`, het rapport in `e2e/.report/` (`npx playwright show-report e2e/.report`).
+- Wijzigt het schema of een policy, werk dan `SCHEMA` in `fake-supabase.mjs` bij.
 
 ## Deployment
 
@@ -60,6 +71,10 @@ Server (alleen Vercel): `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `ADMIN_SECRET`, 
 
 ## Gotchas
 
+- **Opslaan is alles of niets.** `addRecordingAsync` meldt pas succes als het bestand in Storage staat én de rij in de database. Mislukt een van beide, dan gooit hij een fout en houdt het opnamescherm de opname vast. Bouw geen terugval die audio als tekst (`data:`) bewaart: die rij kwam in de database terecht of bleef alleen lokaal staan terwijl de voorlezer "Gelukt" zag.
+- **Het opnameslot is een melding, geen slot.** Tien minuten geldig, elke drie minuten verlengd zolang het opnamescherm open is, vrijgegeven bij `pagehide`. Een tweede voorlezer kan altijd "Toch voorlezen" kiezen.
+- **Audiobestand verwijderen** kan alleen met een beheersessie (`adminApi.deleteAudio`). Na opnieuw opnemen blijft het oude bestand in de bucket staan; de voorlezer mag het niet weghalen.
+- **Beheer-pincode** wordt door de server gecontroleerd (`api/admin-session.ts`). Zonder werkende serversessie komt niemand in Beheer.
 - **Geen login.** De anon-sleutel mag lezen, toevoegen en bijwerken, niet verwijderen. Verwijderen loopt via `api/admin-mutations.ts` (service-sleutel, achter de beheer-pincode). Bouw dus geen functie die als gewone bezoeker iets moet verwijderen: vervang in plaats daarvan (zie `replaceRecordingAsync`).
 - **localStorage is een volwaardige kopie.** `src/lib/storage.ts` schrijft eerst lokaal en duwt records die alleen lokaal bestaan bij de volgende sync naar Supabase. Wie lokaal met echte env-vars test, schrijft dus naar productie. Test zonder env-vars en vul localStorage zelf, of maak localStorage leeg na een test op de live site.
 - **Eerste bezoek wacht op de sync** (`src/App.tsx`), anders kent een persoonlijke voorleeslink de voorlezer nog niet.

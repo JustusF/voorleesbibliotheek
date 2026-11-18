@@ -3,8 +3,10 @@
  * Prevents users from starting recordings when insufficient storage is available
  */
 
-// Minimum required storage space: 1GB
-const MIN_REQUIRED_BYTES = 1 * 1024 * 1024 * 1024 // 1GB
+// Minimum required storage space. An hour of recording is about 30 MB and it
+// only sits on the device until it is uploaded. The old 1 GB limit locked out
+// phones whose browser reports a small quota (iPhones often report less).
+const MIN_REQUIRED_BYTES = 100 * 1024 * 1024 // 100MB
 
 export interface StorageCheckResult {
   canRecord: boolean

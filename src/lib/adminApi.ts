@@ -69,7 +69,7 @@ export async function endAdminSession(): Promise<void> {
 }
 
 async function adminMutation(
-  operation: 'insert' | 'upsert' | 'update' | 'delete' | 'insertMany' | 'upsertMany' | 'deleteWhere',
+  operation: 'insert' | 'upsert' | 'update' | 'delete' | 'insertMany' | 'upsertMany' | 'deleteWhere' | 'deleteAudio',
   table: string,
   options: {
     data?: Record<string, unknown> | Record<string, unknown>[]
@@ -122,4 +122,8 @@ export const adminApi = {
 
   deleteWhere: (table: string, field: string, value: string) =>
     adminMutation('deleteWhere', table, { field, value }),
+
+  /** Remove one file from the audio bucket (visitors have no delete rights). */
+  deleteAudio: (fileName: string) =>
+    adminMutation('deleteAudio', 'recordings', { value: fileName }),
 }

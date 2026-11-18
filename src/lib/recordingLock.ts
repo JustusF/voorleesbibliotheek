@@ -19,8 +19,12 @@ export interface LockCheckResult {
   message?: string
 }
 
-// Lock duration: 2 hours (long recordings + upload time)
-const LOCK_DURATION_MS = 2 * 60 * 60 * 1000
+// A lock lives 10 minutes and is renewed every few minutes while the reader is
+// on the record screen (see LOCK_RENEW_MS). A reader who closes the tab or
+// whose phone dies stops renewing, so the chapter frees itself. It used to be
+// a fixed 2 hours, which blocked everyone else for the rest of the evening.
+const LOCK_DURATION_MS = 10 * 60 * 1000
+export const LOCK_RENEW_MS = 3 * 60 * 1000
 
 // localStorage key for offline/local lock support
 const LOCAL_LOCKS_KEY = 'voorleesbibliotheek_recording_locks'
@@ -176,6 +180,33 @@ export async function releaseLock(
     } catch (error) {
       console.warn('[RecordingLock] Kon Supabase lock niet vrijgeven:', error)
     }
+  }
+}
+
+/**
+ * Release a lock while the page is going away. A normal request is cancelled
+ * when the tab closes; `keepalive` lets this one finish.
+ */
+export function releaseLockOnPageHide(chapterId: string, readerId: string): void {
+  const localLocks = getLocalLocks().filter(
+    l => !(l.chapter_id === chapterId && l.reader_id === readerId)
+  )
+  setLocalLocks(localLocks)
+
+  const url = import.meta.env.VITE_SUPABASE_URL
+  const key = import.meta.env.VITE_SUPABASE_ANON_KEY
+  if (!url || !key) return
+  try {
+    void fetch(
+      `${url}/rest/v1/recording_locks?chapter_id=eq.${chapterId}&reader_id=eq.${readerId}`,
+      {
+        method: 'DELETE',
+        keepalive: true,
+        headers: { apikey: key, Authorization: `Bearer ${key}` },
+      }
+    ).catch(() => {})
+  } catch {
+    // Nothing more to do; the lock expires on its own
   }
 }
 

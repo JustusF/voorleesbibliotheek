@@ -12,7 +12,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 
-type Operation = 'insert' | 'upsert' | 'update' | 'delete' | 'insertMany' | 'upsertMany' | 'deleteWhere'
+type Operation = 'insert' | 'upsert' | 'update' | 'delete' | 'insertMany' | 'upsertMany' | 'deleteWhere' | 'deleteAudio'
 
 interface MutationRequest {
   operation: Operation
@@ -230,6 +230,15 @@ export default async function handler(req: RuntimeRequest, res?: NodeLikeRespons
           return jsonResponse(res, { error: 'field and value required for deleteWhere' }, { status: 400 })
         }
         result = await db.from(table).delete().eq(field, value)
+        break
+
+      // Visitors (anon key) may not delete from the audio bucket, so removing
+      // the file of a deleted recording has to happen here.
+      case 'deleteAudio':
+        if (!value || !/^[A-Za-z0-9_-]+\.(webm|mp4)$/.test(value)) {
+          return jsonResponse(res, { error: 'valid file name required for deleteAudio' }, { status: 400 })
+        }
+        result = await db.storage.from('audio').remove([value])
         break
 
       default:

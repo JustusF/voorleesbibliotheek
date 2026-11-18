@@ -86,7 +86,7 @@ export function AdminPage() {
         animate={{ opacity: 1, y: 0 }}
         className="flex items-center gap-4 mb-8"
       >
-        <Button variant="ghost" onClick={() => navigate('/')} className="!min-w-0 !min-h-0 p-3">
+        <Button variant="ghost" onClick={() => navigate('/')} aria-label="Terug naar de startpagina" className="!min-w-0 !min-h-0 p-3">
           <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>

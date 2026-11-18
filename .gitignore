@@ -30,3 +30,9 @@ dist-ssr
 
 # Supabase temp files
 supabase/.temp/
+
+# e2e
+dist-e2e
+e2e/.cache
+e2e/.results
+e2e/.report

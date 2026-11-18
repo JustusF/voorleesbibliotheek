@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import { startAdminSession } from '../../lib/adminApi'
+import { isSupabaseConfigured } from '../../lib/supabase'
 
 const ADMIN_PIN_KEY = 'voorleesbibliotheek_admin_pin'
 const ADMIN_SESSION_KEY = 'voorleesbibliotheek_admin_session'
@@ -119,6 +120,9 @@ export function PinGate({ onUnlock }: { onUnlock: () => void }) {
   const [lockoutRemaining, setLockoutRemaining] = useState(0)
 
   useEffect(() => {
+    // With a database behind the app the server knows the pincode. "Choose a
+    // pincode" on every new device was misleading: only the real one works.
+    if (isSupabaseConfigured) return
     const storedPin = localStorage.getItem(ADMIN_PIN_KEY)
     if (!storedPin) {
       setIsSetup(true)
@@ -187,6 +191,37 @@ export function PinGate({ onUnlock }: { onUnlock: () => void }) {
   const handlePinInput = async (digit: string) => {
     // Block input during lockout
     if (lockoutRemaining > 0) return
+
+    if (isSupabaseConfigured) {
+      const newPin = pin + digit
+      setPin(newPin)
+      setError('')
+      if (newPin.length < 4) return
+
+      const result = await startAdminSession(newPin)
+      if (result.success) {
+        setRateLimitState({ attempts: 0, firstAttemptTime: 0, lockoutUntil: null })
+        startSession()
+        return
+      }
+      setPin('')
+      if (result.code === 'UNAUTHORIZED') {
+        const attempt = recordFailedAttempt()
+        if (attempt.locked) {
+          setError('Te veel pogingen. Probeer het over 5 minuten opnieuw.')
+          setLockoutRemaining(attempt.lockoutRemainingMs)
+        } else {
+          setError('Onjuiste pincode')
+        }
+      } else if (result.code === 'RATE_LIMITED') {
+        setError('Te veel pogingen. Probeer het later opnieuw.')
+      } else {
+        // Letting someone in without a server session made every change
+        // local-only: it looked saved and came back after the next sync.
+        setError('Beheer is nu niet bereikbaar. Probeer het later opnieuw.')
+      }
+      return
+    }
 
     if (isSetup) {
       if (step === 'enter') {

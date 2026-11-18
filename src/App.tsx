@@ -131,6 +131,30 @@ function AppContent() {
 
   if (firstVisit && isLoading) return <PageLoader />
 
+  // First visit and the library could not be fetched: say so. Showing the
+  // screens anyway gives an empty bookshelf and placeholder names, and a
+  // reader who then adds "the missing book" creates a duplicate.
+  if (firstVisit && localStorage.getItem('voorleesbibliotheek_books') === null) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6">
+        <div className="max-w-sm text-center">
+          <h1 className="font-display text-2xl text-cocoa mb-3">De bibliotheek laadt niet</h1>
+          <p className="text-cocoa-light mb-6">
+            {isOnline
+              ? 'We krijgen de boeken nu niet binnen. Probeer het zo nog een keer.'
+              : 'Je hebt geen internet. Maak verbinding en probeer het opnieuw.'}
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-6 py-3 rounded-xl bg-honey text-ink font-medium hover:bg-honey-dark transition-colors"
+          >
+            Opnieuw proberen
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <>
       <Suspense fallback={<PageLoader />}>

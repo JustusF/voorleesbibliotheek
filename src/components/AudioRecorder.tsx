@@ -15,11 +15,13 @@ interface AudioRecorderProps {
   onCancel: () => void
   chapterId?: string
   readerId?: string
+  /** Skip the question and load the cut-off recording of this chapter straight away */
+  recoverOnMount?: boolean
 }
 
 type RecordingState = 'idle' | 'requesting_permission' | 'permission_denied' | 'recording' | 'paused' | 'recorded' | 'playing'
 
-export function AudioRecorder({ onRecordingComplete, onCancel, chapterId, readerId }: AudioRecorderProps) {
+export function AudioRecorder({ onRecordingComplete, onCancel, chapterId, readerId, recoverOnMount = false }: AudioRecorderProps) {
   const [state, setState] = useState<RecordingState>('idle')
   const [duration, setDuration] = useState(0)
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
@@ -66,16 +68,28 @@ export function AudioRecorder({ onRecordingComplete, onCancel, chapterId, reader
   useEffect(() => {
     const checkRecovery = async () => {
       const recovered = await getRecoverableRecording()
-      if (recovered && recovered.chunks.length > 0) {
-        const blob = new Blob(recovered.chunks, { type: recovered.meta.mimeType })
-        // Estimate duration from chunk count (each chunk is ~10 seconds)
-        const estimatedDuration = recovered.chunks.length * 10
-        setRecoveredBlob(blob)
-        setRecoveredDuration(estimatedDuration)
-        setShowRecovery(true)
+      if (!recovered || recovered.chunks.length === 0) return
+      // Only for the chapter and reader it was recorded for. Offered anywhere
+      // else it would be saved under the wrong chapter.
+      if (recovered.meta.chapterId !== chapterId || recovered.meta.readerId !== readerId) return
+
+      const blob = new Blob(recovered.chunks, { type: recovered.meta.mimeType })
+      // Estimate duration from chunk count (each chunk is ~10 seconds)
+      const estimatedDuration = recovered.chunks.length * 10
+      if (recoverOnMount) {
+        blobRef.current = blob
+        setAudioUrl(URL.createObjectURL(blob))
+        setDuration(estimatedDuration)
+        setState('recorded')
+        return
       }
+      setRecoveredBlob(blob)
+      setRecoveredDuration(estimatedDuration)
+      setShowRecovery(true)
     }
     checkRecovery()
+    // Checked once, for the chapter this recorder was opened on
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Cleanup on unmount to prevent dangling mic/recorder

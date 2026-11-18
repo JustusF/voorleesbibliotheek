@@ -397,20 +397,11 @@ export async function addBookAsync(title: string, author?: string, coverUrl?: st
   }
 
   if (isSupabaseConfigured && supabase) {
-    const { data, error } = await supabase.from('books').insert(newBook).select().single()
-    if (!error && data) {
-      const books = loadFromStorage<Book[]>(STORAGE_KEYS.books, [])
-      books.push(data)
-      saveToStorage(STORAGE_KEYS.books, books)
-      return data
-    }
-
-    reportSyncError('Boek opslaan mislukt', 'books', 'insert')
-    addPendingOperation({
-      table: 'books',
-      operation: 'insert',
-      data: newBook as unknown as Record<string, unknown>,
-    })
+    // A book that only exists on this device blocks every recording made for
+    // it (the database refuses the chapter), so fail here where the reader
+    // can simply try again.
+    const sb = supabase
+    await writeToDatabase('Boek opslaan', () => sb.from('books').insert(newBook))
   }
 
   const books = loadFromStorage<Book[]>(STORAGE_KEYS.books, [])
@@ -617,20 +608,8 @@ export async function addChapterAsync(bookId: string, chapterNumber: number, tit
   }
 
   if (isSupabaseConfigured && supabase) {
-    const { data, error } = await supabase.from('chapters').insert(newChapter).select().single()
-    if (!error && data) {
-      const chapters = loadFromStorage<Chapter[]>(STORAGE_KEYS.chapters, [])
-      chapters.push(data)
-      saveToStorage(STORAGE_KEYS.chapters, chapters)
-      return data
-    }
-
-    reportSyncError('Hoofdstuk opslaan mislukt', 'chapters', 'insert')
-    addPendingOperation({
-      table: 'chapters',
-      operation: 'insert',
-      data: newChapter as unknown as Record<string, unknown>,
-    })
+    const sb = supabase
+    await writeToDatabase('Hoofdstuk opslaan', () => sb.from('chapters').insert(newChapter))
   }
 
   const chapters = loadFromStorage<Chapter[]>(STORAGE_KEYS.chapters, [])
@@ -886,6 +865,20 @@ async function uploadAudioToStorage(
 
 // Delete audio from storage backend (R2 or Supabase)
 async function deleteAudioFromStorage(recordingId: string, audioUrl?: string): Promise<boolean> {
+  // Supabase Storage: the file name comes from the URL (after a re-take it is
+  // no longer the recording id) and the delete needs the admin session.
+  const stored = audioUrl ? /\/storage\/v1\/object\/public\/audio\/([A-Za-z0-9_-]+\.(?:webm|mp4))(?:\?|$)/.exec(audioUrl) : null
+  if (stored) {
+    if (!hasAdminSession()) return false
+    try {
+      await adminApi.deleteAudio(stored[1])
+      return true
+    } catch (error) {
+      console.error('[Storage] Audio verwijderen mislukt:', error)
+      return false
+    }
+  }
+
   const backend = getStorageBackend()
 
   if (!backend.isConfigured()) {
@@ -929,20 +922,15 @@ export async function addRecordingAsync(
       }
     }
 
-    if (uploadedUrl) {
-      audioUrl = uploadedUrl
-    } else if (audioData.size > 4 * 1024 * 1024) {
-      // >4MB won't fit in localStorage — surface the actual error so the user knows what happened
+    if (!uploadedUrl) {
+      // Never fall back to storing the audio as text: that row would go to the
+      // database (megabytes that every device downloads on each sync) or stay
+      // on this device only while the reader is told it was saved. The caller
+      // keeps the take so the reader can try again.
       const reason = lastError?.message ?? 'onbekende fout'
       throw new Error(`Upload mislukt: ${reason}`)
-    } else {
-      // Small enough for base64 fallback
-      audioUrl = await new Promise<string>((resolve) => {
-        const reader = new FileReader()
-        reader.onloadend = () => resolve(reader.result as string)
-        reader.readAsDataURL(audioData)
-      })
     }
+    audioUrl = uploadedUrl
   } else if (audioData instanceof Blob) {
     // Convert Blob to base64 for localStorage
     audioUrl = await new Promise<string>((resolve) => {
@@ -964,19 +952,24 @@ export async function addRecordingAsync(
         created_at: new Date().toISOString(),
       }
       const updated: Recording = { ...existing, ...changes }
-      saveToStorage(STORAGE_KEYS.recordings, all.map(r => (r.id === replaceRecordingId ? updated : r)))
 
       if (isSupabaseConfigured && supabase) {
-        const { error } = await supabase.from('recordings').update(changes).eq('id', replaceRecordingId)
-        if (error) {
-          reportSyncError('Opname vervangen mislukt', 'recordings', 'update')
-          addPendingOperation({
-            table: 'recordings',
-            operation: 'update',
-            data: { id: replaceRecordingId, ...changes },
-          })
-        }
+        const sb = supabase
+        await writeToDatabase('Opname vervangen', async () => {
+          const { data, error } = await sb
+            .from('recordings')
+            .update(changes)
+            .eq('id', replaceRecordingId)
+            .select('id')
+          if (error) return { error }
+          // The row only existed on this device: an update touches nothing and
+          // reports no error, so add it instead.
+          if (!data || data.length === 0) return sb.from('recordings').insert(updated)
+          return { error: null }
+        })
       }
+
+      saveToStorage(STORAGE_KEYS.recordings, all.map(r => (r.id === replaceRecordingId ? updated : r)))
       return updated
     }
   }
@@ -990,25 +983,41 @@ export async function addRecordingAsync(
     created_at: new Date().toISOString(),
   }
 
-  // Save to localStorage first so recording is never lost
+  // The database row is what makes the recording exist for the family. Only
+  // when it is written do we keep the local copy and report success; a reader
+  // has no way to push a local-only row later.
+  if (isSupabaseConfigured && supabase) {
+    const sb = supabase
+    await writeToDatabase('Opname opslaan', () => sb.from('recordings').insert(newRecording))
+  }
+
   const recordings = loadFromStorage<Recording[]>(STORAGE_KEYS.recordings, [])
   recordings.push(newRecording)
   saveToStorage(STORAGE_KEYS.recordings, recordings)
 
-  // Sync to Supabase (non-blocking — localStorage is source of truth)
-  if (isSupabaseConfigured && supabase) {
-    const { error } = await supabase.from('recordings').insert(newRecording)
-    if (error) {
-      reportSyncError('Opname opslaan mislukt', 'recordings', 'insert')
-      addPendingOperation({
-        table: 'recordings',
-        operation: 'insert',
-        data: newRecording as unknown as Record<string, unknown>,
-      })
-    }
-  }
-
   return newRecording
+}
+
+/**
+ * Run a database write that must not fail silently: three attempts, then throw
+ * so the screen can tell the reader it did not work.
+ */
+async function writeToDatabase(
+  what: string,
+  run: () => PromiseLike<{ error: { message: string } | null }>
+): Promise<void> {
+  try {
+    await withRetry(
+      async () => {
+        const { error } = await run()
+        if (error) throw new Error(error.message)
+      },
+      { maxRetries: 3, delayMs: 700 }
+    )
+  } catch (error) {
+    console.error(`[${what}] mislukt:`, error)
+    throw new Error(`${what} mislukt`)
+  }
 }
 
 export function addRecording(chapterId: string, readerId: string, audioUrl: string, durationSeconds: number): Recording {
@@ -1584,8 +1593,11 @@ export async function syncFromSupabase(): Promise<void> {
     console.log(`Processed pending operations: ${success} succeeded, ${failed} failed`)
   }
 
-  // Fetch books from Supabase - merge with local-only records
-  const { data: remoteBooks } = await supabase.from('books').select('*')
+  // Fetch books from Supabase - merge with local-only records.
+  // A failed fetch must surface: otherwise a new device shows an empty library
+  // with made-up default names and no hint that loading went wrong.
+  const { data: remoteBooks, error: booksError } = await supabase.from('books').select('*')
+  if (booksError) throw new Error(`Boeken ophalen mislukt: ${booksError.message}`)
   if (remoteBooks) {
     const localBooks = loadFromStorage<Book[]>(STORAGE_KEYS.books, [])
     const remoteIds = new Set(remoteBooks.map(b => b.id))
@@ -1612,7 +1624,8 @@ export async function syncFromSupabase(): Promise<void> {
   }
 
   // Fetch users from Supabase
-  const { data: remoteUsers } = await supabase.from('users').select('*')
+  const { data: remoteUsers, error: usersError } = await supabase.from('users').select('*')
+  if (usersError) throw new Error(`Gebruikers ophalen mislukt: ${usersError.message}`)
   if (remoteUsers && remoteUsers.length > 0) {
     saveToStorage(STORAGE_KEYS.users, remoteUsers)
   }

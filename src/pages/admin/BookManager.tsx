@@ -138,6 +138,7 @@ export function BookManager({ users, onBooksChanged }: BookManagerProps) {
                   </Button>
                   <button
                     onClick={() => handleDeleteBook(book.id)}
+                    aria-label={`${book.title} verwijderen`}
                     className="p-2 text-cocoa-light hover:text-sunset transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
                   >
                     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
