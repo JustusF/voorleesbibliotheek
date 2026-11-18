@@ -1,7 +1,42 @@
+import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { useNavigate } from 'react-router-dom'
-import { Button, CloudDecoration } from '../components/ui'
-import { FAMILY_NAME } from '../lib/storage'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Avatar, Button, CloudDecoration } from '../components/ui'
+import { FAMILY_NAME, getActiveListener, getUsers } from '../lib/storage'
+import { getResumeItem } from '../lib/resume'
+import type { ResumeItem } from '../lib/resume'
+import type { User } from '../types'
+
+// One tap back into the story: the chapter this child was in, or the next one.
+function ResumeCard({ item, listener, onPlay }: { item: ResumeItem; listener: User; onPlay: () => void }) {
+  return (
+    <motion.button
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.6 }}
+      whileHover={{ scale: 1.02 }}
+      whileTap={{ scale: 0.98 }}
+      onClick={onPlay}
+      className="w-full max-w-md mx-auto mb-6 p-4 bg-white rounded-[28px] shadow-lifted hover:shadow-floating flex items-center gap-4 text-left transition-shadow"
+    >
+      <Avatar src={item.reader.avatar_url} name={item.reader.name} size="md" className="shrink-0" />
+      <span className="flex-1 min-w-0">
+        <span className="block text-sm text-cocoa-light">
+          {item.isNextChapter ? 'Volgende hoofdstuk' : 'Verder luisteren'}, {listener.name}
+        </span>
+        <span className="block font-display text-xl text-cocoa truncate">{item.book.title}</span>
+        <span className="block text-sm text-cocoa-light">
+          {item.chapter.title} · {item.reader.name} leest voor
+        </span>
+      </span>
+      <span className="shrink-0 w-12 h-12 rounded-full bg-sky text-white flex items-center justify-center" aria-hidden="true">
+        <svg className="w-7 h-7 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M8 5v14l11-7z" />
+        </svg>
+      </span>
+    </motion.button>
+  )
+}
 
 // Floating stars decoration
 function FloatingStars() {
@@ -106,6 +141,18 @@ function AnimatedBookIcon() {
 
 export function HomePage() {
   const navigate = useNavigate()
+  // Preview only: ?home=b shows the variant where the play button itself resumes
+  const [searchParams] = useSearchParams()
+  const variantB = searchParams.get('home') === 'b'
+  const [resume] = useState(() => {
+    const listenerId = getActiveListener()
+    const listener = listenerId ? getUsers().find(u => u.id === listenerId) : null
+    const item = listener ? getResumeItem(listener.id) : null
+    return item && listener ? { item, listener } : null
+  })
+  const playResume = () => {
+    if (resume) navigate('/luisteren', { state: { resumeChapterId: resume.item.chapter.id } })
+  }
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-8 relative overflow-hidden">
@@ -116,14 +163,14 @@ export function HomePage() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.6 }}
-        className="text-center z-10"
+        className="text-center z-10 w-full max-w-2xl"
       >
         {/* Logo/Title */}
         <div className="mb-8">
-          <AnimatedBookIcon />
+          {!resume && <AnimatedBookIcon />}
 
           <motion.h1
-            className="font-display text-4xl sm:text-5xl md:text-6xl lg:text-7xl text-cocoa mb-4 px-2"
+            className="font-display text-[2rem] sm:text-5xl md:text-6xl lg:text-7xl text-cocoa mb-4"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.3, duration: 0.6 }}
@@ -149,6 +196,10 @@ export function HomePage() {
           </motion.p>
         </div>
 
+        {resume && !variantB && (
+          <ResumeCard item={resume.item} listener={resume.listener} onPlay={playResume} />
+        )}
+
         {/* Buttons with staggered animation */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -163,17 +214,29 @@ export function HomePage() {
             <Button
               variant="play"
               size="lg"
-              onClick={() => navigate('/luisteren')}
+              onClick={() => (resume && variantB ? playResume() : navigate('/luisteren'))}
               className="min-w-[220px] glow-sky flex-col !gap-0.5"
             >
               <span className="flex items-center gap-2">
                 <svg className="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
                   <path d="M8 5v14l11-7z" />
                 </svg>
-                Luisteren
+                {resume && variantB ? 'Verder luisteren' : 'Luisteren'}
               </span>
-              <span className="text-xs font-normal opacity-80">Beluister opnames</span>
+              <span className="text-xs font-normal opacity-80">
+                {resume && variantB
+                  ? `${resume.item.book.title} · ${resume.item.chapter.title}`
+                  : resume ? 'Kies een ander boek' : 'Beluister opnames'}
+              </span>
             </Button>
+            {resume && variantB && (
+              <button
+                onClick={() => navigate('/luisteren')}
+                className="block mx-auto mt-3 text-sm text-cocoa-light underline"
+              >
+                Ander boek kiezen
+              </button>
+            )}
           </motion.div>
 
           <motion.div

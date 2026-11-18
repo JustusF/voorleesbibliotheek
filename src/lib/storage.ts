@@ -1233,15 +1233,15 @@ let activeListenerId: string | null = null
 export function setActiveListener(listenerId: string | null): void {
   activeListenerId = listenerId
   if (listenerId) {
-    sessionStorage.setItem('voorleesbibliotheek_active_listener', listenerId)
+    localStorage.setItem('voorleesbibliotheek_active_listener', listenerId)
   } else {
-    sessionStorage.removeItem('voorleesbibliotheek_active_listener')
+    localStorage.removeItem('voorleesbibliotheek_active_listener')
   }
 }
 
 export function getActiveListener(): string | null {
   if (activeListenerId) return activeListenerId
-  const stored = sessionStorage.getItem('voorleesbibliotheek_active_listener')
+  const stored = localStorage.getItem('voorleesbibliotheek_active_listener')
   if (stored) {
     activeListenerId = stored
     return stored

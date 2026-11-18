@@ -1,6 +1,6 @@
 import { useState, useEffect, useReducer, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { Button, CloudDecoration, Avatar, Card, ConfirmDialog } from '../components/ui'
 import { AudioRecorder } from '../components/AudioRecorder'
 import { FileUpload } from '../components/FileUpload'
@@ -9,6 +9,7 @@ import { uploadAudioFile } from '../lib/audioUpload'
 import { checkAvailableStorage, type StorageCheckResult } from '../lib/storageSpaceCheck'
 import { checkChapterLock, acquireLock, releaseLock, type LockCheckResult } from '../lib/recordingLock'
 import { clearBackup } from '../lib/recordingBackup'
+import { getKnownReader, getLastBookForReader, rememberReader } from '../lib/resume'
 import type { Book, Chapter, User, Recording } from '../types'
 
 type Step = 'reader' | 'book' | 'chapter' | 'record' | 'success'
@@ -79,15 +80,32 @@ function wizardReducer(state: WizardState, action: WizardAction): WizardState {
   }
 }
 
+// A reader who comes in through their personal link, or who recorded on this
+// device before, skips "Wie ben jij?" and lands on the book they were reading.
+function initWizard(search: string): WizardState {
+  const reader = getKnownReader(search)
+  if (!reader) return initialWizardState
+  const book = getLastBookForReader(reader.id)
+  return {
+    ...initialWizardState,
+    selectedReader: reader,
+    selectedBook: book,
+    step: book ? 'chapter' : 'book',
+  }
+}
+
 export function ReadPage() {
   const navigate = useNavigate()
-  const [wizard, dispatch] = useReducer(wizardReducer, initialWizardState)
+  const location = useLocation()
+  const [wizard, dispatch] = useReducer(wizardReducer, location.search, initWizard)
   const { step, selectedReader, selectedBook, currentChapter, recordMode, bookMode } = wizard
 
   const [books, setBooks] = useState<Book[]>([])
   const [users, setUsers] = useState<User[]>([])
   const [newBookTitle, setNewBookTitle] = useState('')
-  const [bookChapters, setBookChapters] = useState<Chapter[]>([])
+  const [bookChapters, setBookChapters] = useState<Chapter[]>(() =>
+    wizard.selectedBook ? getChaptersForBook(wizard.selectedBook.id) : []
+  )
 
   // Overwrite confirmation state
   const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false)
@@ -99,7 +117,9 @@ export function ReadPage() {
 
   // Reader dashboard state
   const [showDashboard, setShowDashboard] = useState(false)
-  const [readerRecordings, setReaderRecordings] = useState<Recording[]>([])
+  const [readerRecordings, setReaderRecordings] = useState<Recording[]>(() =>
+    wizard.selectedReader ? getRecordingsForReader(wizard.selectedReader.id) : []
+  )
 
   // Saving progress state
   const [isSaving, setIsSaving] = useState(false)
@@ -190,6 +210,7 @@ export function ReadPage() {
 
   const handleReaderSelect = (reader: User) => {
     setReaderRecordings(getRecordingsForReader(reader.id))
+    rememberReader(reader.id)
     dispatch({ type: 'SELECT_READER', reader })
   }
 
@@ -484,6 +505,17 @@ export function ReadPage() {
           {step === 'record' && selectedBook?.title}
           {step === 'success' && 'Gelukt!'}
         </h1>
+        {selectedReader && (step === 'book' || step === 'chapter') && (
+          <button
+            onClick={() => dispatch({ type: 'BACK_TO_READER' })}
+            className="ml-auto shrink-0 flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/60 hover:bg-white transition-colors"
+            aria-label={`Je leest voor als ${selectedReader.name}. Wissel van voorlezer`}
+          >
+            <Avatar src={selectedReader.avatar_url} name={selectedReader.name} size="sm" className="shrink-0" />
+            <span className="text-sm font-medium text-cocoa whitespace-nowrap">{selectedReader.name}</span>
+            <span className="text-sm text-cocoa-light underline hidden sm:inline">Niet jij?</span>
+          </button>
+        )}
       </motion.header>
 
       {/* Progress indicator */}

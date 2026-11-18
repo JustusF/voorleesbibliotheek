@@ -63,7 +63,7 @@ describe('Progress Tracking', () => {
     expect(getChapterProgress('chapter-1')!.currentTime).toBe(80)
   })
 
-  it('stores and retrieves active listener from sessionStorage', () => {
+  it('stores and retrieves active listener from localStorage', () => {
     setActiveListener('listener-abc')
     expect(getActiveListener()).toBe('listener-abc')
   })
@@ -72,7 +72,7 @@ describe('Progress Tracking', () => {
     setActiveListener('listener-abc')
     setActiveListener(null)
     // getActiveListener checks the in-memory var, which is null
-    // but also falls back to sessionStorage which was cleared
+    // but also falls back to localStorage which was cleared
     expect(getActiveListener()).toBeNull()
   })
 

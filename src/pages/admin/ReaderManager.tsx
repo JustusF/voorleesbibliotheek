@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { Button, Card, Avatar, ConfirmDialog, useToast } from '../../components/ui'
 import { getUsers, deleteUser } from '../../lib/storage'
+import { readerLink } from '../../lib/resume'
 import { AddReaderModal } from './AddReaderModal'
 import { EditReaderModal } from './EditReaderModal'
 import type { User } from '../../types'
@@ -37,6 +38,16 @@ export function ReaderManager({ onUsersChanged }: ReaderManagerProps) {
   const handleEditReader = (user: User) => {
     setSelectedUser(user)
     setShowEditReader(true)
+  }
+
+  const handleCopyLink = async (user: User) => {
+    const link = readerLink(user.id)
+    try {
+      await navigator.clipboard.writeText(link)
+      showToast(`Link voor ${user.name} gekopieerd. Stuur hem via WhatsApp.`, 'success')
+    } catch {
+      window.prompt(`Kopieer de link voor ${user.name}:`, link)
+    }
   }
 
   const handleDeleteReader = (userId: string) => {
@@ -85,6 +96,13 @@ export function ReaderManager({ onUsersChanged }: ReaderManagerProps) {
                   {user.role === 'admin' ? 'Beheerder' : 'Voorlezer'}
                 </p>
               </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => handleCopyLink(user)}
+              >
+                Kopieer link
+              </Button>
               <Button
                 variant="ghost"
                 size="sm"

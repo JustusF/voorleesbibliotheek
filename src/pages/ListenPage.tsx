@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { BookCover, Avatar, CloudDecoration, Button, Card } from '../components/ui'
 import { AudioPlayer } from '../components/AudioPlayer'
 import { getBooks, getUsers, addUser, getBookWithChapters, getChapterWithRecordings, getChapterProgress, getProgress, getRecordings, getChapters, getBooksAsync, getUsersAsync, setActiveListener, getActiveListener, migrateGlobalProgress } from '../lib/storage'
 import type { ChapterProgress } from '../lib/storage'
 import { useRealtimeSync } from '../hooks/useRealtimeSync'
+import { resolvePlayableChapter } from '../lib/resume'
 import type { Book, User, Chapter, Recording } from '../types'
 
 type ViewMode = 'listener-select' | 'books' | 'readers' | 'chapters' | 'player' | 'reader-recordings'
@@ -42,8 +43,17 @@ function getInitialActiveListener(): User | null {
 export function ListenPage() {
   const navigate = useNavigate()
   const [activeListener, setActiveListenerState] = useState<User | null>(() => getInitialActiveListener())
-  const [viewMode, setViewMode] = useState<ViewMode>(() => activeListener ? 'books' : 'listener-select')
-  const [selected, setSelected] = useState<SelectedState>({})
+  const location = useLocation()
+  // Home's "Verder luisteren" passes the chapter to open
+  const [resume] = useState<SelectedState | null>(() => {
+    const chapterId = (location.state as { resumeChapterId?: string } | null)?.resumeChapterId
+    if (!chapterId || !activeListener) return null
+    return resolvePlayableChapter(chapterId, getChapterProgress(chapterId)?.recordingId)
+  })
+  const [viewMode, setViewMode] = useState<ViewMode>(() =>
+    !activeListener ? 'listener-select' : resume ? 'player' : 'books'
+  )
+  const [selected, setSelected] = useState<SelectedState>(() => resume ?? {})
   const [books, setBooks] = useState<Book[]>(() => getBooks())
   const [users, setUsers] = useState<User[]>(() => getUsers())
   const [newChildName, setNewChildName] = useState('')
@@ -270,8 +280,6 @@ export function ListenPage() {
     } else if (viewMode === 'reader-recordings') {
       setViewMode('readers')
       setSelected({})
-    } else if (viewMode === 'books' || viewMode === 'readers') {
-      handleSwitchListener()
     } else {
       navigate('/')
     }
