@@ -512,7 +512,7 @@ export function ReadPage() {
             aria-label={`Je leest voor als ${selectedReader.name}. Wissel van voorlezer`}
           >
             <Avatar src={selectedReader.avatar_url} name={selectedReader.name} size="sm" className="shrink-0" />
-            <span className="text-sm font-medium text-cocoa whitespace-nowrap">{selectedReader.name}</span>
+            <span className="text-sm font-medium text-cocoa whitespace-nowrap hidden sm:inline">{selectedReader.name}</span>
             <span className="text-sm text-cocoa-light underline hidden sm:inline">Niet jij?</span>
           </button>
         )}
