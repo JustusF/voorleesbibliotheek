@@ -110,17 +110,18 @@ export function BookManager({ users, onBooksChanged }: BookManagerProps) {
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
               >
-                <Card className="p-4 flex items-center gap-4">
+                <Card className="p-4 flex flex-wrap items-center gap-x-4 gap-y-1">
                   <div className="w-12 h-12 shrink-0 rounded-xl bg-honey-light text-ink flex items-center justify-center">
                     <Icon name="book" className="w-6 h-6" />
                   </div>
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-[55%]">
                     <p className="font-display text-lg text-cocoa">{book.title}</p>
                     <p className="text-sm text-cocoa-light">
                       {book.author && <span>{book.author} · </span>}
                       {getChaptersForBook(book.id).length} hoofdstukken
                     </p>
                   </div>
+                  <div className="flex items-center gap-1 ml-auto">
                   <Button
                     variant="ghost"
                     size="sm"
@@ -143,6 +144,7 @@ export function BookManager({ users, onBooksChanged }: BookManagerProps) {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                     </svg>
                   </button>
+                  </div>
                 </Card>
               </motion.div>
             ))}

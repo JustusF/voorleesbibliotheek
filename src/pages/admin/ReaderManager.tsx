@@ -76,7 +76,7 @@ export function ReaderManager({ onUsersChanged }: ReaderManagerProps) {
         className="max-w-2xl"
       >
         <div className="flex justify-between items-center mb-6">
-          <h2 className="font-display text-xl text-cocoa">Voorlezers</h2>
+          <h2 className="font-display text-xl text-cocoa">Voorlezers en luisteraars</h2>
           <Button variant="primary" onClick={() => setShowAddReader(true)}>
             + Voorlezer toevoegen
           </Button>
@@ -84,25 +84,30 @@ export function ReaderManager({ onUsersChanged }: ReaderManagerProps) {
 
         <div className="space-y-3">
           {users.map((user) => (
-            <Card key={user.id} className="p-4 flex items-center gap-4">
+            <Card key={user.id} className="p-4 flex flex-wrap items-center gap-x-4 gap-y-1">
               <Avatar
                 src={user.avatar_url}
                 name={user.name}
                 size="md"
+                className="shrink-0"
               />
-              <div className="flex-1">
+              <div className="flex-1 min-w-[45%]">
                 <p className="font-display text-lg text-cocoa">{user.name}</p>
                 <p className="text-sm text-cocoa-light">
-                  {user.role === 'admin' ? 'Beheerder' : 'Voorlezer'}
+                  {user.role === 'admin' ? 'Beheerder' : user.role === 'listener' ? 'Luisteraar' : 'Voorlezer'}
                 </p>
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => handleCopyLink(user)}
-              >
-                Kopieer link
-              </Button>
+              <div className="flex items-center gap-1 ml-auto">
+              {user.role !== 'listener' && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleCopyLink(user)}
+                  className="whitespace-nowrap"
+                >
+                  Kopieer link
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 size="sm"
@@ -120,6 +125,7 @@ export function ReaderManager({ onUsersChanged }: ReaderManagerProps) {
                   </svg>
                 </button>
               )}
+              </div>
             </Card>
           ))}
         </div>

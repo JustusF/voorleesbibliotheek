@@ -52,7 +52,7 @@ export function ChapterItem({
 
   return (
     <div className="bg-white rounded-2xl shadow-soft overflow-hidden">
-      <div className="p-4 flex items-center gap-3">
+      <div className="p-4 flex flex-wrap items-center gap-x-3 gap-y-1">
         {/* Chapter number */}
         <div className="w-10 h-10 rounded-lg bg-sky-light flex items-center justify-center font-display text-cocoa flex-shrink-0">
           {chapter.chapter_number}
@@ -80,12 +80,12 @@ export function ChapterItem({
             </Button>
           </div>
         ) : (
-          <p className="flex-1 text-cocoa">{chapter.title}</p>
+          <p className="flex-1 min-w-[50%] text-cocoa">{chapter.title}</p>
         )}
 
         {/* Action buttons */}
         {!isEditing && (
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 ml-auto">
             {/* Move up */}
             <button
               onClick={() => onMove(chapter, 'up')}

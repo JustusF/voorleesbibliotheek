@@ -397,12 +397,20 @@ export async function addBookAsync(title: string, author?: string, coverUrl?: st
   }
 
   if (isSupabaseConfigured && supabase) {
-    const { data, error } = await supabase.from('books').insert(newBook).select().single()
+    let { data, error } = await supabase.from('books').insert(newBook).select().single()
+    if (error?.code === 'PGRST204') {
+      // The live table has no author column until migration
+      // 20261118094500 has run; without this retry no reader can add a book.
+      const withoutAuthor: Partial<Book> = { ...newBook }
+      delete withoutAuthor.author
+      ;({ data, error } = await supabase.from('books').insert(withoutAuthor).select().single())
+    }
     if (!error && data) {
+      const saved: Book = { ...newBook, ...data }
       const books = loadFromStorage<Book[]>(STORAGE_KEYS.books, [])
-      books.push(data)
+      books.push(saved)
       saveToStorage(STORAGE_KEYS.books, books)
-      return data
+      return saved
     }
 
     reportSyncError('Boek opslaan mislukt', 'books', 'insert')
