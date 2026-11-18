@@ -6,7 +6,7 @@ import { AudioPlayer } from '../components/AudioPlayer'
 import { getBooks, getUsers, addUser, getBookWithChapters, getChapterWithRecordings, getChapterProgress, getProgress, getRecordings, getChapters, getBooksAsync, getUsersAsync, setActiveListener, getActiveListener, migrateGlobalProgress } from '../lib/storage'
 import type { ChapterProgress } from '../lib/storage'
 import { useRealtimeSync } from '../hooks/useRealtimeSync'
-import { resolvePlayableChapter } from '../lib/resume'
+import { chapterIdFromSearch, resolvePlayableChapter } from '../lib/resume'
 import type { Book, User, Chapter, Recording } from '../types'
 
 type ViewMode = 'listener-select' | 'books' | 'readers' | 'chapters' | 'player' | 'reader-recordings'
@@ -56,11 +56,15 @@ export function ListenPage() {
   const navigate = useNavigate()
   const [activeListener, setActiveListenerState] = useState<User | null>(() => getInitialActiveListener())
   const location = useLocation()
-  // Home's "Verder luisteren" passes the chapter to open
+  // The chapter to open straight away: from Home's "Verder luisteren" or from
+  // a link a reader shared (/luisteren?hoofdstuk=<id>)
+  const [linkedChapterId] = useState<string | null>(() =>
+    (location.state as { resumeChapterId?: string } | null)?.resumeChapterId
+      ?? chapterIdFromSearch(location.search)
+  )
   const [resume] = useState<SelectedState | null>(() => {
-    const chapterId = (location.state as { resumeChapterId?: string } | null)?.resumeChapterId
-    if (!chapterId || !activeListener) return null
-    return resolvePlayableChapter(chapterId, getChapterProgress(chapterId)?.recordingId)
+    if (!linkedChapterId || !activeListener) return null
+    return resolvePlayableChapter(linkedChapterId, getChapterProgress(linkedChapterId)?.recordingId)
   })
   const [viewMode, setViewMode] = useState<ViewMode>(() =>
     !activeListener ? 'listener-select' : resume ? 'player' : 'books'
@@ -88,6 +92,13 @@ export function ListenPage() {
     setActiveListener(listener.id)
     // Migrate any old global progress to this listener
     migrateGlobalProgress(listener.id)
+    // Came in through a shared chapter link: play it now that we know who listens
+    const linked = linkedChapterId && !resume ? resolvePlayableChapter(linkedChapterId) : null
+    if (linked) {
+      setSelected(linked)
+      setViewMode('player')
+      return
+    }
     setViewMode('books')
   }
 
@@ -798,7 +809,7 @@ export function ListenPage() {
                     }}
                     className="w-full p-5 bg-white rounded-[20px] shadow-soft hover:shadow-lifted text-left flex items-center gap-4 transition-shadow"
                   >
-                    <div className="w-12 h-12 shrink-0 rounded-[12px] bg-sky-light text-cocoa flex items-center justify-center font-display text-xl">
+                    <div className="w-12 h-12 shrink-0 rounded-[12px] bg-sky-light text-ink flex items-center justify-center font-display text-xl">
                       {chapter?.chapter_number}
                     </div>
                     <div className="flex-1">
@@ -903,8 +914,8 @@ export function ListenPage() {
                 >
                   <div className={`
                     shrink-0 w-14 h-14 rounded-[16px] flex items-center justify-center
-                    font-display text-2xl text-cocoa
-                    ${progress?.completed ? 'bg-moss/40' : hasRecordings ? 'bg-sky-light' : 'bg-cream-dark'}
+                    font-display text-2xl
+                    ${progress?.completed ? 'bg-moss/40 text-cocoa' : hasRecordings ? 'bg-sky-light text-ink' : 'bg-cream-dark text-cocoa'}
                   `}>
                     {progress?.completed ? <Icon name="check" className="w-7 h-7" /> : chapter.chapter_number}
                   </div>

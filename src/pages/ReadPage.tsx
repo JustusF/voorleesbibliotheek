@@ -4,12 +4,12 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { Button, CloudDecoration, Avatar, Card, ConfirmDialog, Icon } from '../components/ui'
 import { AudioRecorder } from '../components/AudioRecorder'
 import { FileUpload } from '../components/FileUpload'
-import { getBooks, getBook, getUsers, addRecordingAsync, addBookAsync, getOrCreateNextChapterAsync, getChaptersForBook, getRecordingsForChapter, updateChapter, getRecordingsForReader, getChapter } from '../lib/storage'
+import { getBooks, getBook, getUsers, replaceRecordingAsync, addBookAsync, getOrCreateNextChapterAsync, getChaptersForBook, getRecordingsForChapter, updateChapter, getRecordingsForReader, getChapter } from '../lib/storage'
 import { uploadAudioFile } from '../lib/audioUpload'
 import { checkAvailableStorage, type StorageCheckResult } from '../lib/storageSpaceCheck'
 import { checkChapterLock, acquireLock, releaseLock, type LockCheckResult } from '../lib/recordingLock'
 import { clearBackup } from '../lib/recordingBackup'
-import { getKnownReader, getLastBookForReader, rememberReader } from '../lib/resume'
+import { chapterLink, getKnownReader, getLastBookForReader, rememberReader } from '../lib/resume'
 import type { Book, Chapter, User, Recording } from '../types'
 
 type Step = 'reader' | 'book' | 'chapter' | 'record' | 'success'
@@ -344,7 +344,8 @@ export function ReadPage() {
     setIsSaving(true)
     setSaveProgress(0)
     try {
-      await addRecordingAsync(
+      // Replaces this reader's earlier take of the chapter, if there is one
+      await replaceRecordingAsync(
         currentChapter.id,
         selectedReader.id,
         blob,
@@ -481,6 +482,27 @@ export function ReadPage() {
     const steps = ['reader', 'book', 'chapter', 'record']
     const index = steps.indexOf(s)
     return index === -1 ? steps.length : index
+  }
+
+  // One tap to tell the family there is something new to listen to. Without
+  // this nobody knows a chapter was added.
+  const handleShare = async () => {
+    if (!currentChapter || !selectedBook || !selectedReader) return
+    const generic = /^hoofdstuk\s*\d+$/i.test(currentChapter.title.trim())
+    const what = generic
+      ? `hoofdstuk ${currentChapter.chapter_number}`
+      : `hoofdstuk ${currentChapter.chapter_number} (${currentChapter.title})`
+    const text = `${selectedReader.name} heeft ${what} van ${selectedBook.title} voorgelezen. Luister hier:`
+    const url = chapterLink(currentChapter.id)
+    if (navigator.share) {
+      try {
+        await navigator.share({ text, url })
+      } catch {
+        // Share sheet closed without sending: nothing to do
+      }
+      return
+    }
+    window.open(`https://wa.me/?text=${encodeURIComponent(`${text} ${url}`)}`, '_blank', 'noopener')
   }
 
   const nextUnread = [...bookChapters]
@@ -907,7 +929,7 @@ export function ReadPage() {
                           onClick={() => handleChapterSelect(chapter)}
                           className="flex-1 min-w-0 flex items-center gap-4 text-left cursor-pointer"
                         >
-                          <div className={`relative shrink-0 w-14 h-14 rounded-[14px] flex items-center justify-center font-display text-2xl text-cocoa ${hasRecording ? 'bg-moss/40' : 'bg-sky-light'}`}>
+                          <div className={`relative shrink-0 w-14 h-14 rounded-[14px] flex items-center justify-center font-display text-2xl ${hasRecording ? 'bg-moss/40 text-cocoa' : 'bg-sky-light text-ink'}`}>
                             {chapter.chapter_number}
                             {hasRecording && (
                               <span className="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-moss text-ink flex items-center justify-center">
@@ -1137,9 +1159,9 @@ export function ReadPage() {
               initial={{ scale: 0 }}
               animate={{ scale: 1 }}
               transition={{ type: 'spring', stiffness: 200, delay: 0.2 }}
-              className="w-32 h-32 mx-auto mb-8 bg-moss rounded-full flex items-center justify-center shadow-floating"
+              className="w-24 h-24 mx-auto mb-6 bg-moss rounded-full flex items-center justify-center shadow-floating"
             >
-              <svg className="w-16 h-16 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="w-12 h-12 text-ink" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
               </svg>
             </motion.div>
@@ -1155,7 +1177,14 @@ export function ReadPage() {
             </p>
 
             <div className="flex flex-col gap-4">
-              {/* Primary action: next chapter if available */}
+              <Button variant="play" size="lg" onClick={handleShare} className="w-full">
+                <svg className="w-6 h-6 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+                </svg>
+                Laat de familie weten
+              </Button>
+
+              {/* Next chapter if available */}
               {getNextChapter() ? (
                 <Button variant="primary" size="lg" onClick={handleNextChapter} className="w-full">
                   <svg className="w-6 h-6 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1190,8 +1219,8 @@ export function ReadPage() {
         isOpen={showOverwriteConfirm}
         onClose={handleCancelOverwrite}
         onConfirm={handleConfirmOverwrite}
-        title="Bestaande opname vervangen?"
-        message={`Dit hoofdstuk heeft al een opname. Als je een nieuwe opname maakt, wordt de oude opname vervangen. Weet je dit zeker?`}
+        title="Opnieuw voorlezen?"
+        message="Dit hoofdstuk is al voorgelezen. Een eerdere opname van jou wordt vervangen; opnames van anderen blijven staan."
         confirmText="Ja, nieuwe opname"
         cancelText="Nee, annuleren"
         variant="default"

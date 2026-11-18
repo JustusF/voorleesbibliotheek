@@ -101,3 +101,12 @@ export function getKnownReader(search: string): User | null {
 export function readerLink(readerId: string): string {
   return `${window.location.origin}/voorlezen?wie=${readerId}`
 }
+
+/** Link that opens the player on one chapter, for sharing with the family. */
+export function chapterLink(chapterId: string): string {
+  return `${window.location.origin}/luisteren?hoofdstuk=${chapterId}`
+}
+
+export function chapterIdFromSearch(search: string): string | null {
+  return new URLSearchParams(search).get('hoofdstuk')
+}

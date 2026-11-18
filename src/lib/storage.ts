@@ -397,20 +397,12 @@ export async function addBookAsync(title: string, author?: string, coverUrl?: st
   }
 
   if (isSupabaseConfigured && supabase) {
-    let { data, error } = await supabase.from('books').insert(newBook).select().single()
-    if (error?.code === 'PGRST204') {
-      // The live table has no author column until migration
-      // 20261118094500 has run; without this retry no reader can add a book.
-      const withoutAuthor: Partial<Book> = { ...newBook }
-      delete withoutAuthor.author
-      ;({ data, error } = await supabase.from('books').insert(withoutAuthor).select().single())
-    }
+    const { data, error } = await supabase.from('books').insert(newBook).select().single()
     if (!error && data) {
-      const saved: Book = { ...newBook, ...data }
       const books = loadFromStorage<Book[]>(STORAGE_KEYS.books, [])
-      books.push(saved)
+      books.push(data)
       saveToStorage(STORAGE_KEYS.books, books)
-      return saved
+      return data
     }
 
     reportSyncError('Boek opslaan mislukt', 'books', 'insert')
@@ -856,13 +848,12 @@ export async function replaceRecordingAsync(
   const existingRecording = getRecordingsForChapter(chapterId)
     .find(r => r.reader_id === readerId)
 
-  // 2. Delete old recording if it exists
-  if (existingRecording) {
-    await deleteRecordingAsync(existingRecording.id)
-  }
-
-  // 3. Add new recording
-  return await addRecordingAsync(chapterId, readerId, audioData, durationSeconds, onProgress)
+  // 2. Readers have no delete rights (and deleting first would lose the old
+  //    take if the upload fails). Upload the new audio, then point the
+  //    existing row at it.
+  return await addRecordingAsync(
+    chapterId, readerId, audioData, durationSeconds, onProgress, existingRecording?.id
+  )
 }
 
 export function getRecordingsForReader(readerId: string): Recording[] {
@@ -910,8 +901,11 @@ export async function addRecordingAsync(
   readerId: string,
   audioData: string | Blob,
   durationSeconds: number,
-  onProgress?: (pct: number) => void
+  onProgress?: (pct: number) => void,
+  replaceRecordingId?: string
 ): Promise<Recording> {
+  // Always a fresh id for the audio file: a new URL, so no player or cache
+  // keeps serving the old take.
   const recordingId = crypto.randomUUID()
   let audioUrl: string
 
@@ -958,6 +952,33 @@ export async function addRecordingAsync(
     })
   } else {
     audioUrl = audioData
+  }
+
+  if (replaceRecordingId) {
+    const all = loadFromStorage<Recording[]>(STORAGE_KEYS.recordings, [])
+    const existing = all.find(r => r.id === replaceRecordingId)
+    if (existing) {
+      const changes = {
+        audio_url: audioUrl,
+        duration_seconds: durationSeconds,
+        created_at: new Date().toISOString(),
+      }
+      const updated: Recording = { ...existing, ...changes }
+      saveToStorage(STORAGE_KEYS.recordings, all.map(r => (r.id === replaceRecordingId ? updated : r)))
+
+      if (isSupabaseConfigured && supabase) {
+        const { error } = await supabase.from('recordings').update(changes).eq('id', replaceRecordingId)
+        if (error) {
+          reportSyncError('Opname vervangen mislukt', 'recordings', 'update')
+          addPendingOperation({
+            table: 'recordings',
+            operation: 'update',
+            data: { id: replaceRecordingId, ...changes },
+          })
+        }
+      }
+      return updated
+    }
   }
 
   const newRecording: Recording = {
@@ -1149,6 +1170,12 @@ export function addUser(name: string, role: 'reader' | 'admin' | 'listener' = 'r
   if (isSupabaseConfigured && hasAdminSession()) {
     adminApi.insert('users', newUser as unknown as Record<string, unknown>).catch(() => {
       reportSyncError('Gebruiker opslaan mislukt', 'users', 'insert')
+    })
+  } else if (isSupabaseConfigured && supabase) {
+    // A child adding themselves as listener has no admin session. Without this
+    // insert their progress could never sync (it references the user row).
+    supabase.from('users').insert(newUser).then(({ error }) => {
+      if (error) reportSyncError('Gebruiker opslaan mislukt', 'users', 'insert')
     })
   }
 
