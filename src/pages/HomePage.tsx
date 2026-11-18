@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { Avatar, Button, CloudDecoration } from '../components/ui'
 import { FAMILY_NAME, getActiveListener, getUsers } from '../lib/storage'
 import { getResumeItem } from '../lib/resume'
@@ -141,9 +141,6 @@ function AnimatedBookIcon() {
 
 export function HomePage() {
   const navigate = useNavigate()
-  // Preview only: ?home=b shows the variant where the play button itself resumes
-  const [searchParams] = useSearchParams()
-  const variantB = searchParams.get('home') === 'b'
   const [resume] = useState(() => {
     const listenerId = getActiveListener()
     const listener = listenerId ? getUsers().find(u => u.id === listenerId) : null
@@ -196,7 +193,7 @@ export function HomePage() {
           </motion.p>
         </div>
 
-        {resume && !variantB && (
+        {resume && (
           <ResumeCard item={resume.item} listener={resume.listener} onPlay={playResume} />
         )}
 
@@ -214,29 +211,20 @@ export function HomePage() {
             <Button
               variant="play"
               size="lg"
-              onClick={() => (resume && variantB ? playResume() : navigate('/luisteren'))}
+              onClick={() => navigate('/luisteren')}
               className="min-w-[220px] glow-sky flex-col !gap-0.5"
             >
               <span className="flex items-center gap-2">
                 <svg className="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
                   <path d="M8 5v14l11-7z" />
                 </svg>
-                {resume && variantB ? 'Verder luisteren' : 'Luisteren'}
+                Luisteren
               </span>
               <span className="text-xs font-normal opacity-80">
-                {resume && variantB
-                  ? `${resume.item.book.title} · ${resume.item.chapter.title}`
-                  : resume ? 'Kies een ander boek' : 'Beluister opnames'}
+                {resume ? 'Kies een ander boek' : 'Beluister opnames'}
               </span>
             </Button>
-            {resume && variantB && (
-              <button
-                onClick={() => navigate('/luisteren')}
-                className="block mx-auto mt-3 text-sm text-cocoa-light underline"
-              >
-                Ander boek kiezen
-              </button>
-            )}
+
           </motion.div>
 
           <motion.div
