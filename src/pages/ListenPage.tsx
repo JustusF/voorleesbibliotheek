@@ -7,6 +7,7 @@ import { getBooks, getUsers, addUser, getBookWithChapters, getChapterWithRecordi
 import type { ChapterProgress } from '../lib/storage'
 import { useRealtimeSync } from '../hooks/useRealtimeSync'
 import { chapterIdFromSearch, resolvePlayableChapter } from '../lib/resume'
+import { useInAppBack } from '../hooks/useInAppBack'
 import type { Book, User, Chapter, Recording } from '../types'
 
 type ViewMode = 'listener-select' | 'books' | 'readers' | 'chapters' | 'player' | 'reader-recordings'
@@ -70,6 +71,9 @@ export function ListenPage() {
     !activeListener ? 'listener-select' : resume ? 'player' : 'books'
   )
   const [selected, setSelected] = useState<SelectedState>(() => resume ?? {})
+  // A shared link to a chapter nobody has read yet: say so instead of silently
+  // dropping the listener on the bookshelf
+  const [linkMissing, setLinkMissing] = useState(() => Boolean(linkedChapterId && activeListener && !resume))
   const [books, setBooks] = useState<Book[]>(() => getBooks())
   const [users, setUsers] = useState<User[]>(() => getUsers())
   const [newChildName, setNewChildName] = useState('')
@@ -99,6 +103,7 @@ export function ListenPage() {
       setViewMode('player')
       return
     }
+    if (linkedChapterId && !resume) setLinkMissing(true)
     setViewMode('books')
   }
 
@@ -308,6 +313,9 @@ export function ListenPage() {
     }
   }
 
+  // Phone back button: one step back inside this page, not out of the app
+  useInAppBack(viewMode === 'player' || viewMode === 'chapters' || viewMode === 'reader-recordings', handleBack)
+
   const handleClosePlayer = () => {
     // Save as last played for mini-player
     if (selected.recording && selected.chapter && selected.book && selected.reader) {
@@ -391,7 +399,7 @@ export function ListenPage() {
   const bookWithChapters = selected.book ? getBookWithChapters(selected.book.id) : null
 
   return (
-    <div className="min-h-screen p-6 md:p-8 relative overflow-hidden">
+    <div className={`min-h-screen p-6 md:p-8 relative overflow-hidden ${viewMode !== 'player' && lastPlayed ? 'pb-28 md:pb-28' : ''}`}>
       <CloudDecoration />
 
       {/* Header */}
@@ -507,6 +515,21 @@ export function ListenPage() {
             </motion.button>
           )}
         </motion.div>
+      )}
+
+      {linkMissing && viewMode === 'books' && (
+        <div role="status" className="relative z-10 mb-6 flex items-center gap-3 rounded-2xl bg-white px-4 py-3 shadow-soft">
+          <p className="flex-1 text-cocoa">Dit hoofdstuk is nog niet voorgelezen. Kies hieronder een ander verhaal.</p>
+          <button
+            onClick={() => setLinkMissing(false)}
+            aria-label="Melding sluiten"
+            className="flex-shrink-0 p-2 text-cocoa-light hover:text-cocoa"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
       )}
 
       {/* View switcher for main views */}
@@ -959,9 +982,9 @@ export function ListenPage() {
             initial={{ y: 100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 100, opacity: 0 }}
-            className="fixed bottom-0 left-0 right-0 z-40 pb-[env(safe-area-inset-bottom)]"
+            className="fixed bottom-0 left-0 right-0 z-40 bg-white shadow-floating border-t border-cream-dark pb-[env(safe-area-inset-bottom)]"
           >
-            <div className="w-full bg-white shadow-floating border-t border-cream-dark px-4 py-3 flex items-center gap-2">
+            <div className="w-full px-4 py-3 flex items-center gap-2">
               <button
                 onClick={handleResumeFromMiniPlayer}
                 className="flex-1 min-w-0 flex items-center gap-3 text-left rounded-xl hover:bg-cream/50 transition-colors"

@@ -132,3 +132,53 @@ test('audiobestand is weg: het kind krijgt een melding, geen eeuwig draaiend wie
   await expect(page.getByRole('heading', { name: 'Kon audio niet laden' })).toBeVisible({ timeout: 20_000 })
   await expect(page.getByRole('button', { name: 'Opnieuw proberen' })).toBeVisible()
 })
+
+test('terugknop van de telefoon gaat één stap terug, niet de app uit', async ({ page }) => {
+  await chooseListener(page)
+  await page.getByRole('button', { name: /Kikker is Kikker/ }).click()
+  await page.getByRole('button', { name: /Kikker en de vreemdeling/ }).click()
+  await expect(page.getByText('Voorgelezen door Tantanne')).toBeVisible()
+
+  await page.goBack()
+  await expect(page.getByRole('heading', { name: 'Kikker is Kikker' }), 'vanuit de speler naar de hoofdstukken').toBeVisible()
+  await page.goBack()
+  await expect(page.getByRole('heading', { name: 'Kies een boek' })).toBeVisible()
+  await page.goBack()
+  await expect(page.getByRole('button', { name: /Voorlezen/ }), 'pas daarna de startpagina').toBeVisible()
+})
+
+test('balk "verder luisteren" onderin dekt het laatste hoofdstuk niet af', async ({ page }) => {
+  const seed = baseSeed()
+  for (let n = 5; n <= 14; n++) {
+    seed.tables.chapters.push({
+      id: `a0000000-0000-4000-8000-0000000001${String(n).padStart(2, '0')}`,
+      book_id: ids.kikker, chapter_number: n, title: `Hoofdstuk ${n}`, created_at: '2026-10-02T10:00:00.000+00:00',
+    })
+  }
+  await backend.reset(seed)
+  await chooseListener(page)
+  await page.getByRole('button', { name: /Kikker is Kikker/ }).click()
+  await page.getByRole('button', { name: /Kikker en de vreemdeling/ }).click()
+  await expect(page.getByText('Voorgelezen door Tantanne')).toBeVisible()
+  await page.getByRole('button', { name: 'Sluiten' }).first().click()
+
+  const bar = page.locator('.fixed.bottom-0')
+  await expect(bar).toBeVisible()
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
+  const last = page.getByRole('button', { name: /Hoofdstuk 14/ })
+  await expect
+    .poll(async () => (await last.boundingBox())!.y + (await last.boundingBox())!.height - (await bar.boundingBox())!.y)
+    .toBeLessThanOrEqual(0)
+})
+
+test('deellink naar een hoofdstuk zonder opname: het kind leest waarom er niets speelt', async ({ page }) => {
+  await chooseListener(page)
+  await page.goto(`/luisteren?hoofdstuk=${ids.kikker3}`)
+  await expect(page.getByText('Dit hoofdstuk is nog niet voorgelezen')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Kies een boek' })).toBeVisible()
+})
+
+test('onbekend adres komt op de startpagina uit, niet op een leeg scherm', async ({ page }) => {
+  await page.goto('/bestaat-niet')
+  await expect(page.getByRole('button', { name: /Luisteren/ })).toBeVisible()
+})

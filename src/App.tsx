@@ -1,5 +1,5 @@
 import { lazy, Suspense, useState } from 'react'
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { motion, AnimatePresence, MotionConfig } from 'framer-motion'
 import { HomePage } from './pages/HomePage'
 import { AppProvider, useSyncStatus, useSyncErrors } from './context/AppContext'
@@ -31,7 +31,9 @@ type SyncStatus = 'idle' | 'syncing' | 'success' | 'error' | 'offline'
 function SyncIndicator({ status, isOnline }: { status: SyncStatus; isOnline: boolean }) {
   const displayStatus = !isOnline ? 'offline' : status
 
-  if (displayStatus === 'idle') return null
+  // Alleen melden wat iemand moet weten. "Gesynchroniseerd" bij elke pagina
+  // zegt een voorlezer niets en dekt de onderste knop af.
+  if (displayStatus !== 'error' && displayStatus !== 'offline') return null
 
   return (
     <AnimatePresence>
@@ -45,29 +47,9 @@ function SyncIndicator({ status, isOnline }: { status: SyncStatus; isOnline: boo
       >
         <div className={`
           flex items-center gap-2 px-4 py-2 rounded-full shadow-soft text-sm
-          ${displayStatus === 'syncing' ? 'bg-sky-light text-cocoa' : ''}
-          ${displayStatus === 'success' ? 'bg-moss text-ink' : ''}
           ${displayStatus === 'error' ? 'bg-sunset text-white' : ''}
           ${displayStatus === 'offline' ? 'bg-cream-dark text-cocoa-light' : ''}
         `}>
-          {displayStatus === 'syncing' && (
-            <>
-              <motion.div
-                animate={{ rotate: 360 }}
-                transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-                className="w-4 h-4 border-2 border-cocoa border-t-transparent rounded-full"
-              />
-              <span>Synchroniseren...</span>
-            </>
-          )}
-          {displayStatus === 'success' && (
-            <>
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
-              <span>Gesynchroniseerd</span>
-            </>
-          )}
           {displayStatus === 'error' && (
             <>
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -163,6 +145,8 @@ function AppContent() {
           <Route path="/luisteren" element={<ListenPage />} />
           <Route path="/voorlezen" element={<ReadPage />} />
           <Route path="/beheer" element={<AdminPage />} />
+          {/* Onbekend adres (typfout, oude link): naar de startpagina, geen leeg scherm */}
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>
       <SyncErrorBanner />

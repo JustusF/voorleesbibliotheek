@@ -498,7 +498,7 @@ export function AudioPlayer({
           animate={{ scale: 1, y: 0 }}
           exit={{ scale: 0.9, y: 20 }}
           onClick={(e) => e.stopPropagation()}
-          className="bg-white rounded-t-[32px] sm:rounded-[32px] shadow-floating p-6 sm:p-8 w-full sm:max-w-md relative max-h-[95vh] sm:max-h-none overflow-y-auto"
+          className="bg-white rounded-t-[32px] sm:rounded-[32px] shadow-floating p-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:p-8 w-full sm:max-w-md relative max-h-[95dvh] sm:max-h-none overflow-y-auto"
         >
           <audio ref={audioRef} src={recording.audio_url} preload="metadata" />
 

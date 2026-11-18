@@ -13,6 +13,8 @@ import {
 interface AudioRecorderProps {
   onRecordingComplete: (blob: Blob, duration: number) => void
   onCancel: () => void
+  /** True zodra er iets is ingesproken dat nog niet is opgeslagen */
+  onBusyChange?: (busy: boolean) => void
   chapterId?: string
   readerId?: string
   /** Skip the question and load the cut-off recording of this chapter straight away */
@@ -21,8 +23,13 @@ interface AudioRecorderProps {
 
 type RecordingState = 'idle' | 'requesting_permission' | 'permission_denied' | 'recording' | 'paused' | 'recorded' | 'playing'
 
-export function AudioRecorder({ onRecordingComplete, onCancel, chapterId, readerId, recoverOnMount = false }: AudioRecorderProps) {
+export function AudioRecorder({ onRecordingComplete, onCancel, onBusyChange, chapterId, readerId, recoverOnMount = false }: AudioRecorderProps) {
   const [state, setState] = useState<RecordingState>('idle')
+  const busy = state === 'recording' || state === 'paused' || state === 'recorded' || state === 'playing'
+  useEffect(() => {
+    onBusyChange?.(busy)
+    return () => onBusyChange?.(false)
+  }, [busy, onBusyChange])
   const [duration, setDuration] = useState(0)
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
   const [permissionError, setPermissionError] = useState<string | null>(null)

@@ -374,3 +374,20 @@ test('eerste bezoek terwijl de database niet reageert: geen leeg of vastgelopen 
   await page.getByRole('button', { name: 'Opnieuw proberen' }).click()
   await expect(page.getByRole('heading', { name: 'Welk hoofdstuk?' })).toBeVisible()
 })
+
+test('terugknop tijdens het opnemen: eerst vragen, niet stil weggooien', async ({ page }) => {
+  await openChapterToRecord(page, ids.tantanne, /Hoofdstuk 3/)
+  await page.getByRole('button', { name: 'Direct opnemen' }).click()
+  await page.getByRole('button', { name: 'Start opname' }).click()
+  await expect(page.getByRole('heading', { name: 'Aan het opnemen...' })).toBeVisible()
+
+  await page.goBack()
+  await expect(page.getByRole('heading', { name: 'Stoppen met opnemen?' })).toBeVisible()
+  await page.getByRole('button', { name: 'Verder opnemen' }).click()
+  await expect(page.getByRole('heading', { name: 'Aan het opnemen...' }), 'de opname loopt door').toBeVisible()
+
+  await page.goBack()
+  await page.getByRole('button', { name: 'Ja, stoppen' }).click()
+  await expect(page.getByRole('button', { name: 'Direct opnemen' })).toBeVisible()
+  expect(new URL(page.url()).pathname, 'nog steeds in Voorlezen').toBe('/voorlezen')
+})

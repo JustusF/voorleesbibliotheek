@@ -1,6 +1,7 @@
 import { useState, useEffect, useReducer, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useLocation, useNavigate } from 'react-router-dom'
+import { useInAppBack } from '../hooks/useInAppBack'
 import { Button, CloudDecoration, Avatar, Card, ConfirmDialog, Icon } from '../components/ui'
 import { AudioRecorder } from '../components/AudioRecorder'
 import { FileUpload } from '../components/FileUpload'
@@ -126,6 +127,8 @@ export function ReadPage() {
 
   // Saving progress state
   const [isSaving, setIsSaving] = useState(false)
+  const [recorderBusy, setRecorderBusy] = useState(false)
+  const [showStopConfirm, setShowStopConfirm] = useState(false)
   const [saveProgress, setSaveProgress] = useState(0)
 
   // New book author state
@@ -506,6 +509,12 @@ export function ReadPage() {
   }
 
   const handleBack = async () => {
+    if (isSaving) return
+    // Terug tijdens een opname gooit hem weg: eerst vragen
+    if (step === 'record' && recordMode === 'record' && recorderBusy) {
+      setShowStopConfirm(true)
+      return
+    }
     if (step === 'success') {
       dispatch({ type: 'BACK_TO_RECORD' })
     } else if (step === 'record') {
@@ -532,6 +541,9 @@ export function ReadPage() {
       navigate('/')
     }
   }
+
+  // Terugknop van de telefoon: één stap terug in de wizard, niet de app uit
+  useInAppBack(step !== 'reader', () => void handleBack())
 
   // Go to the next chapter directly
   const handleNextChapter = async () => {
@@ -1201,6 +1213,7 @@ export function ReadPage() {
             <AudioRecorder
               onRecordingComplete={handleRecordingComplete}
               onCancel={handleCancelRecording}
+              onBusyChange={setRecorderBusy}
               chapterId={currentChapter?.id}
               readerId={selectedReader?.id}
               recoverOnMount={recoverOnMount}
@@ -1335,6 +1348,18 @@ export function ReadPage() {
         message="Dit hoofdstuk is al voorgelezen. Een eerdere opname van jou wordt vervangen; opnames van anderen blijven staan."
         confirmText="Ja, nieuwe opname"
         cancelText="Nee, annuleren"
+        variant="default"
+      />
+
+      {/* Terug gedrukt tijdens een opname */}
+      <ConfirmDialog
+        isOpen={showStopConfirm}
+        onClose={() => setShowStopConfirm(false)}
+        onConfirm={() => void handleCancelRecording()}
+        title="Stoppen met opnemen?"
+        message="Wat je nu hebt ingesproken wordt dan niet bewaard."
+        confirmText="Ja, stoppen"
+        cancelText="Verder opnemen"
         variant="default"
       />
 
