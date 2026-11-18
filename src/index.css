@@ -12,6 +12,8 @@
   --color-cream-dark: #FFF0E0;
   --color-cocoa: #5D4E37;
   --color-cocoa-light: #7A6B52;
+  /* Text on bright fills (sky, honey, moss). Stays dark in dark mode. */
+  --color-ink: #3B2F1E;
   --color-sky: #7EC8E3;
   --color-sky-light: #A8DDF0;
   --color-moss: #8FBC8F;

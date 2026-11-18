@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { BookCover, Avatar, CloudDecoration, Button, Card } from '../components/ui'
+import { BookCover, Avatar, CloudDecoration, Button, Card, Icon } from '../components/ui'
 import { AudioPlayer } from '../components/AudioPlayer'
 import { getBooks, getUsers, addUser, getBookWithChapters, getChapterWithRecordings, getChapterProgress, getProgress, getRecordings, getChapters, getBooksAsync, getUsersAsync, setActiveListener, getActiveListener, migrateGlobalProgress } from '../lib/storage'
 import type { ChapterProgress } from '../lib/storage'
@@ -31,6 +31,18 @@ const containerVariants = {
 const itemVariants = {
   hidden: { opacity: 0, y: 20 },
   visible: { opacity: 1, y: 0 },
+}
+
+// "Hoofdstuk 3" as a title adds nothing next to the number badge
+function chapterLabel(chapter: Chapter): string {
+  const generic = /^hoofdstuk\s*\d+$/i.test(chapter.title.trim())
+  return generic ? `Hoofdstuk ${chapter.chapter_number}` : chapter.title
+}
+
+function formatMinutes(seconds: number): string {
+  const mins = Math.max(1, Math.round(seconds / 60))
+  if (mins >= 60) return `${Math.floor(mins / 60)} u ${mins % 60} min`
+  return `${mins} min`
 }
 
 function getInitialActiveListener(): User | null {
@@ -437,7 +449,6 @@ export function ListenPage() {
             </div>
           ) : (
             <div className="text-center py-8 mb-6">
-              <div className="text-5xl mb-4">👋</div>
               <p className="text-cocoa-light">Voeg een luisteraar toe om te beginnen</p>
             </div>
           )}
@@ -518,15 +529,13 @@ export function ListenPage() {
           animate={{ opacity: 1, y: 0 }}
           className="mb-8"
         >
-          <h2 className="font-display text-xl text-cocoa mb-4 flex items-center gap-2">
-            <span className="text-2xl">🎧</span> Verder luisteren
-          </h2>
+          <h2 className="font-display text-xl text-cocoa mb-4">Verder luisteren</h2>
           <div className="flex gap-3 overflow-x-auto pb-2 -mx-2 px-2 snap-x snap-mandatory">
             {continueListening.map(item => {
               const percent = item.progress.duration > 0
                 ? Math.round((item.progress.currentTime / item.progress.duration) * 100)
                 : 0
-              const remainMins = Math.ceil((item.progress.duration - item.progress.currentTime) / 60)
+              const remainMins = Math.max(1, Math.ceil((item.progress.duration - item.progress.currentTime) / 60))
               return (
                 <motion.button
                   key={`${item.chapter.id}-${item.recording.id}`}
@@ -539,19 +548,19 @@ export function ListenPage() {
                     {item.book.cover_url ? (
                       <img src={item.book.cover_url} alt="" className="w-full h-full object-cover" />
                     ) : (
-                      <div className="w-full h-full bg-gradient-to-br from-honey to-honey-dark flex items-center justify-center text-white text-lg">
-                        📖
+                      <div className="w-full h-full bg-gradient-to-br from-honey to-honey-dark flex items-center justify-center text-white">
+                        <Icon name="book" className="w-6 h-6" />
                       </div>
                     )}
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-display text-sm text-cocoa truncate">{item.book.title}</p>
-                    <p className="text-xs text-cocoa-light truncate">H{item.chapter.chapter_number}: {item.chapter.title}</p>
+                    <p className="text-xs text-cocoa-light truncate">{chapterLabel(item.chapter)}</p>
                     <div className="flex items-center gap-2 mt-1.5">
                       <div className="flex-1 h-1.5 bg-cream-dark rounded-full overflow-hidden">
                         <div className="h-full bg-sky rounded-full" style={{ width: `${percent}%` }} />
                       </div>
-                      <span className="text-[10px] text-cocoa-light whitespace-nowrap">nog {remainMins}m</span>
+                      <span className="text-xs text-cocoa-light whitespace-nowrap">nog {remainMins} min</span>
                     </div>
                   </div>
                 </motion.button>
@@ -602,7 +611,7 @@ export function ListenPage() {
               animate={{ opacity: 1, y: 0 }}
               className="max-w-md mx-auto text-center py-12"
             >
-              <div className="text-6xl mb-6">🔍</div>
+              <Icon name="search" className="w-14 h-14 mx-auto mb-6 text-cocoa-light" />
               <h2 className="font-display text-2xl text-cocoa mb-4">Geen resultaten</h2>
               <p className="text-cocoa-light mb-6">
                 Geen boeken gevonden voor "{searchQuery}"
@@ -617,7 +626,7 @@ export function ListenPage() {
               animate={{ opacity: 1, y: 0 }}
               className="max-w-md mx-auto text-center py-12"
             >
-              <div className="text-6xl mb-6">📚</div>
+              <Icon name="book" className="w-14 h-14 mx-auto mb-6 text-cocoa-light" />
               <h2 className="font-display text-2xl text-cocoa mb-4">Nog geen boeken</h2>
               <p className="text-cocoa-light mb-6">
                 Er zijn nog geen boeken toegevoegd. Vraag papa of mama om boeken toe te voegen in Beheer.
@@ -631,7 +640,7 @@ export function ListenPage() {
               variants={containerVariants}
               initial="hidden"
               animate="visible"
-              className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4 md:gap-6"
+              className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 md:gap-6"
             >
               {filteredBooks.map((book) => {
                 const bookProg = bookProgressMap[book.id]
@@ -640,16 +649,6 @@ export function ListenPage() {
                   ? Math.round((bookProg.listened / bookProg.total) * 100)
                   : 0
 
-                // Format relative date
-                const formatLastPlayed = (iso: string | null) => {
-                  if (!iso) return null
-                  const diff = Date.now() - new Date(iso).getTime()
-                  const days = Math.floor(diff / 86400000)
-                  if (days === 0) return 'Vandaag'
-                  if (days === 1) return 'Gisteren'
-                  if (days < 7) return `${days} dagen geleden`
-                  return `${Math.floor(days / 7)}w geleden`
-                }
 
                 return (
                   <motion.div key={book.id} variants={itemVariants}>
@@ -669,20 +668,20 @@ export function ListenPage() {
                         </div>
                       )}
                     </div>
-                    <p className="mt-2 text-center font-display text-sm sm:text-base text-cocoa line-clamp-2">
-                      {book.title}
-                    </p>
+                    {/* A real cover photo has no readable title, so repeat it below */}
+                    {book.cover_url && (
+                      <p className="mt-2 text-center font-display text-base text-cocoa line-clamp-2">
+                        {book.title}
+                      </p>
+                    )}
                     {book.author && (
-                      <p className="text-center text-xs sm:text-sm text-cocoa-light line-clamp-1">
+                      <p className="mt-1 text-center text-sm text-cocoa-light line-clamp-1">
                         {book.author}
                       </p>
                     )}
                     {hasProgress && bookProg.total > 0 && (
-                      <p className="text-center text-[10px] text-cocoa-light mt-0.5">
-                        H{bookProg.listened}/{bookProg.total}
-                        {bookProg.lastPlayed && (
-                          <span className="ml-1 text-sky">{formatLastPlayed(bookProg.lastPlayed)}</span>
-                        )}
+                      <p className="text-center text-sm text-cocoa-light mt-1">
+                        {bookProg.listened} van {bookProg.total} geluisterd
                       </p>
                     )}
                   </motion.div>
@@ -722,7 +721,7 @@ export function ListenPage() {
                     size="xl"
                   />
                   {recordingCount > 0 && (
-                    <div className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-sky flex items-center justify-center text-white text-sm font-bold shadow-md" aria-hidden="true">
+                    <div className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-sky flex items-center justify-center text-ink text-sm font-bold shadow-md" aria-hidden="true">
                       {recordingCount}
                     </div>
                   )}
@@ -766,7 +765,7 @@ export function ListenPage() {
             if (readerRecordings.length === 0) {
               return (
                 <Card hoverable={false} className="p-8 text-center">
-                  <div className="text-5xl mb-4">🎙️</div>
+                  <Icon name="mic" className="w-12 h-12 mx-auto mb-4 text-cocoa-light" />
                   <h3 className="font-display text-xl text-cocoa mb-2">Nog geen opnames</h3>
                   <p className="text-cocoa-light mb-6">
                     {selected.reader.name} heeft nog geen hoofdstukken voorgelezen.
@@ -799,12 +798,12 @@ export function ListenPage() {
                     }}
                     className="w-full p-5 bg-white rounded-[20px] shadow-soft hover:shadow-lifted text-left flex items-center gap-4 transition-shadow"
                   >
-                    <div className="w-12 h-12 rounded-[12px] bg-sky-light flex items-center justify-center text-2xl">
-                      🎧
+                    <div className="w-12 h-12 shrink-0 rounded-[12px] bg-sky-light text-cocoa flex items-center justify-center font-display text-xl">
+                      {chapter?.chapter_number}
                     </div>
                     <div className="flex-1">
                       <p className="font-display text-lg text-cocoa">{book?.title}</p>
-                      <p className="text-cocoa-light">Hoofdstuk {chapter?.chapter_number}: {chapter?.title}</p>
+                      <p className="text-cocoa-light">{chapter ? chapterLabel(chapter) : ''}</p>
                     </div>
                     <svg className="w-6 h-6 text-cocoa-light" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
@@ -837,15 +836,6 @@ export function ListenPage() {
           { totalDuration: 0, readers: [] as string[], chaptersWithRecordings: 0 }
         )
 
-        const formatBookDuration = (seconds: number) => {
-          const hours = Math.floor(seconds / 3600)
-          const mins = Math.floor((seconds % 3600) / 60)
-          if (hours > 0) {
-            return `${hours}u ${mins}m`
-          }
-          return `${mins} min`
-        }
-
         return (
         <motion.div
           variants={containerVariants}
@@ -853,40 +843,17 @@ export function ListenPage() {
           animate="visible"
           className="max-w-2xl mx-auto space-y-4"
         >
-          {/* Book info header */}
+          {/* Book info in one scannable line */}
           {bookStats.chaptersWithRecordings > 0 && (
-            <motion.div
-              variants={itemVariants}
-              className="p-4 bg-white/60 rounded-[20px] flex flex-wrap items-center gap-4 mb-2"
-            >
-              {bookStats.totalDuration > 0 && (
-                <div className="flex items-center gap-2">
-                  <span className="text-lg">⏱️</span>
-                  <span className="text-cocoa">
-                    <span className="font-medium">{formatBookDuration(bookStats.totalDuration)}</span>
-                    <span className="text-cocoa-light ml-1">totaal</span>
-                  </span>
-                </div>
-              )}
-              {bookStats.readers.length > 0 && (
-                <div className="flex items-center gap-2">
-                  <span className="text-lg">🎙️</span>
-                  <span className="text-cocoa">
-                    <span className="text-cocoa-light">Voorgelezen door </span>
-                    <span className="font-medium">{bookStats.readers.join(', ')}</span>
-                  </span>
-                </div>
-              )}
-              <div className="flex items-center gap-2 text-cocoa-light">
-                <span className="text-lg">📖</span>
-                <span>{bookStats.chaptersWithRecordings} van {bookWithChapters.chapters.length} hoofdstukken</span>
-              </div>
-            </motion.div>
+            <motion.p variants={itemVariants} className="text-cocoa-light px-1">
+              {bookStats.chaptersWithRecordings} van {bookWithChapters.chapters.length} hoofdstukken
+              {bookStats.totalDuration > 0 && ` · ${formatMinutes(bookStats.totalDuration)}`}
+              {bookStats.readers.length > 0 && ` · ${bookStats.readers.join(', ')} ${bookStats.readers.length === 1 ? 'leest' : 'lezen'} voor`}
+            </motion.p>
           )}
 
           {bookWithChapters.chapters.length === 0 ? (
             <Card hoverable={false} className="p-8 text-center">
-              <div className="text-4xl mb-4">📝</div>
               <p className="text-cocoa-light">
                 Dit boek heeft nog geen hoofdstukken.
               </p>
@@ -907,85 +874,50 @@ export function ListenPage() {
                 ? Math.round((currentTimeSeconds / durationSeconds) * 100)
                 : 0
 
-              // Format time helper
-              const formatTime = (seconds: number) => {
-                const mins = Math.floor(seconds / 60)
-                const secs = Math.floor(seconds % 60)
-                if (mins >= 60) {
-                  const hours = Math.floor(mins / 60)
-                  const remainingMins = mins % 60
-                  return `${hours}u ${remainingMins}m`
-                }
-                return `${mins}:${secs.toString().padStart(2, '0')}`
-              }
-
-              // Get reader name
               const readerName = recording?.reader?.name
+              const started = progressPercent > 0 && !progress?.completed
+              const status = !hasRecordings
+                ? 'Nog niet voorgelezen'
+                : progress?.completed
+                  ? 'Uitgeluisterd'
+                  : started
+                    ? `nog ${formatMinutes(remainingSeconds)}`
+                    : durationSeconds > 0 ? formatMinutes(durationSeconds) : ''
 
               return (
                 <motion.button
                   key={chapter.id}
                   variants={itemVariants}
-                  whileHover={{ scale: 1.02, x: 4 }}
-                  whileTap={{ scale: 0.98 }}
+                  whileTap={hasRecordings ? { scale: 0.98 } : undefined}
                   onClick={() => handleChapterSelect(chapter)}
                   disabled={!hasRecordings}
                   className={`
-                    w-full p-6 rounded-[24px] text-left
+                    w-full p-4 rounded-[24px] text-left
                     flex items-center gap-4
-                    transition-colors relative overflow-hidden
+                    transition-shadow relative overflow-hidden
                     ${hasRecordings
                       ? 'bg-white shadow-soft hover:shadow-lifted cursor-pointer'
-                      : 'bg-cream-dark/50 cursor-not-allowed opacity-60'
+                      : 'bg-cream-dark/50 cursor-not-allowed opacity-70'
                     }
                   `}
                 >
-                  {/* Progress bar background */}
-                  {hasRecordings && progressPercent > 0 && (
-                    <div
-                      className="absolute left-0 top-0 bottom-0 bg-sky-light/30 transition-all duration-300"
-                      style={{ width: `${progressPercent}%` }}
-                    />
-                  )}
-
                   <div className={`
-                    relative w-14 h-14 rounded-[16px] flex items-center justify-center text-2xl
-                    ${progress?.completed ? 'bg-moss' : hasRecordings ? 'bg-sky-light' : 'bg-cream-dark'}
+                    shrink-0 w-14 h-14 rounded-[16px] flex items-center justify-center
+                    font-display text-2xl text-cocoa
+                    ${progress?.completed ? 'bg-moss/40' : hasRecordings ? 'bg-sky-light' : 'bg-cream-dark'}
                   `}>
-                    {progress?.completed ? '✅' : hasRecordings ? '🎧' : '📝'}
+                    {progress?.completed ? <Icon name="check" className="w-7 h-7" /> : chapter.chapter_number}
                   </div>
-                  <div className="flex-1 relative">
-                    <div className="flex items-center gap-2">
-                      <p className="font-display text-xl text-cocoa">
-                        Hoofdstuk {chapter.chapter_number}
-                      </p>
-                      {hasRecordings && durationSeconds > 0 && (
-                        <span className="text-sm text-cocoa-light bg-cream-dark/50 px-2 py-0.5 rounded-full">
-                          {formatTime(durationSeconds)}
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-cocoa-light">{chapter.title}</p>
-                    {hasRecordings && (
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs">
-                        {readerName && (
-                          <span className="text-cocoa-light">
-                            Voorgelezen door <span className="font-medium text-cocoa">{readerName}</span>
-                          </span>
-                        )}
-                        {progressPercent > 0 && !progress?.completed && (
-                          <span className="text-sky">
-                            {formatTime(currentTimeSeconds)} beluisterd • nog {formatTime(remainingSeconds)}
-                          </span>
-                        )}
-                        {progress?.completed && (
-                          <span className="text-moss font-medium">Voltooid</span>
-                        )}
-                      </div>
-                    )}
+                  <div className="flex-1 min-w-0">
+                    <p className="font-display text-lg leading-snug text-cocoa line-clamp-2">
+                      {chapterLabel(chapter)}
+                    </p>
+                    <p className="text-sm text-cocoa-light truncate">
+                      {[readerName, status].filter(Boolean).join(' · ')}
+                    </p>
                   </div>
                   {hasRecordings && chapterData && (
-                    <div className="flex -space-x-2 relative">
+                    <div className="flex -space-x-2 shrink-0">
                       {chapterData.recordings.slice(0, 3).map((rec) => (
                         <Avatar
                           key={rec.id}
@@ -994,6 +926,11 @@ export function ListenPage() {
                           size="sm"
                         />
                       ))}
+                    </div>
+                  )}
+                  {started && (
+                    <div className="absolute left-0 right-0 bottom-0 h-1.5 bg-cream-dark">
+                      <div className="h-full bg-sky" style={{ width: `${progressPercent}%` }} />
                     </div>
                   )}
                 </motion.button>
@@ -1022,8 +959,8 @@ export function ListenPage() {
                   {lastPlayed.book.cover_url ? (
                     <img src={lastPlayed.book.cover_url} alt="" className="w-full h-full object-cover" />
                   ) : (
-                    <div className="w-full h-full bg-gradient-to-br from-honey to-honey-dark flex items-center justify-center text-white text-sm">
-                      📖
+                    <div className="w-full h-full bg-gradient-to-br from-honey to-honey-dark flex items-center justify-center text-white">
+                      <Icon name="book" className="w-5 h-5" />
                     </div>
                   )}
                 </div>
@@ -1032,7 +969,7 @@ export function ListenPage() {
                   <p className="text-xs text-cocoa-light truncate">{lastPlayed.book.title} · {lastPlayed.reader.name}</p>
                 </div>
                 <div className="flex-shrink-0 w-10 h-10 rounded-full bg-sky flex items-center justify-center">
-                  <svg className="w-5 h-5 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-5 h-5 text-ink ml-0.5" fill="currentColor" viewBox="0 0 24 24">
                     <path d="M8 5v14l11-7z" />
                   </svg>
                 </div>

@@ -488,7 +488,7 @@ export function AudioPlayer({
               onClick={() => { setShowChapterList(!showChapterList); setShowSettings(false) }}
               aria-label="Inhoudsopgave"
               className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition-colors ${
-                showChapterList ? 'bg-sky text-white' : 'bg-cream-dark hover:bg-honey-light text-cocoa'
+                showChapterList ? 'bg-sky text-ink' : 'bg-cream-dark hover:bg-honey-light text-cocoa'
               }`}
             >
               <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -502,7 +502,7 @@ export function AudioPlayer({
                 onClick={() => { setShowSettings(!showSettings); setShowChapterList(false) }}
                 aria-label="Instellingen"
                 className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition-colors ${
-                  showSettings ? 'bg-sky text-white' : 'bg-cream-dark hover:bg-honey-light text-cocoa'
+                  showSettings ? 'bg-sky text-ink' : 'bg-cream-dark hover:bg-honey-light text-cocoa'
                 }`}
               >
                 <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -579,12 +579,10 @@ export function AudioPlayer({
 
           {/* Chapter info */}
           <div className="text-center mb-4 sm:mb-6">
+            <p className="text-cocoa-light text-sm mb-1">
+              {book.title} · hoofdstuk {chapter.chapter_number}
+            </p>
             <h2 className="font-display text-xl sm:text-2xl text-cocoa mb-1">{chapter.title}</h2>
-            {book.author && (
-              <p className="text-cocoa-light text-sm mb-1">
-                door {book.author}
-              </p>
-            )}
             <p className="text-cocoa-light text-sm">
               Voorgelezen door <span className="font-semibold">{reader.name}</span>
             </p>
@@ -598,7 +596,7 @@ export function AudioPlayer({
                     onClick={() => onRecordingSelect?.(rec, r)}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs transition-colors ${
                       rec.id === recording.id
-                        ? 'bg-sky text-white'
+                        ? 'bg-sky text-ink'
                         : 'bg-cream-dark text-cocoa hover:bg-honey-light'
                     }`}
                   >
@@ -645,7 +643,7 @@ export function AudioPlayer({
             >
               <button
                 onClick={togglePlay}
-                className="flex items-center gap-2 px-5 py-3 bg-sky text-white rounded-full font-medium shadow-soft hover:shadow-lifted transition-shadow"
+                className="flex items-center gap-2 px-5 py-3 bg-sky text-ink rounded-full font-medium shadow-soft hover:shadow-lifted transition-shadow"
               >
                 <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
                   <path d="M8 5v14l11-7z" />
@@ -657,24 +655,16 @@ export function AudioPlayer({
 
           {/* Progress bar */}
           <div className="mb-4 sm:mb-6">
-            <div className="relative h-3 bg-cream-dark rounded-full overflow-hidden mb-2" aria-hidden="true">
-              <div
-                ref={progressBarRef}
-                className="absolute left-0 top-0 bottom-0 bg-gradient-to-r from-sky to-sky-light rounded-full transition-[width] duration-200 ease-linear"
-                style={{ width: `${progress}%` }}
-              />
-              <div className="absolute left-0 top-1/2 -translate-y-1/2 text-lg" aria-hidden="true">🌱</div>
-              <div
-                className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 text-2xl"
-                style={{ left: `${Math.max(5, Math.min(95, progress))}%` }}
-                aria-hidden="true"
-              >
-                📖
-              </div>
-              <div className="absolute right-0 top-1/2 -translate-y-1/2 text-lg" aria-hidden="true">🏠</div>
-            </div>
             {/* Enlarged seek slider with bigger touch area (min 48px) */}
-            <div className="py-2">
+            <div className="relative py-2 flex items-center">
+              {/* Track and filled part drawn here; the input on top only supplies the thumb */}
+              <div className="absolute left-0 right-0 h-3 bg-cream-dark rounded-full overflow-hidden pointer-events-none" aria-hidden="true">
+                <div
+                  ref={progressBarRef}
+                  className="h-full bg-sky rounded-full"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
               <input
                 type="range"
                 min={0}
@@ -683,7 +673,7 @@ export function AudioPlayer({
                 onChange={seek}
                 aria-label="Audio voortgang"
                 aria-valuetext={`${formatTime(displayTime)} van ${formatTime(duration)}`}
-                className="audio-seek-slider w-full rounded-full appearance-none cursor-pointer"
+                className="audio-seek-slider relative w-full rounded-full appearance-none cursor-pointer !bg-transparent"
               />
             </div>
             <div className="flex justify-between text-sm text-cocoa-light" aria-live="polite" aria-atomic="true">
@@ -744,7 +734,7 @@ export function AudioPlayer({
                 <motion.div
                   animate={{ rotate: 360 }}
                   transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-                  className="w-8 h-8 sm:w-10 sm:h-10 border-4 border-white border-t-transparent rounded-full"
+                  className="w-8 h-8 sm:w-10 sm:h-10 border-4 border-ink border-t-transparent rounded-full"
                   aria-hidden="true"
                 />
               ) : isPlaying ? (
@@ -853,7 +843,7 @@ export function AudioPlayer({
                           onClick={() => setPlaybackSpeed(value)}
                           className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-colors ${
                             playbackSpeed === value
-                              ? 'bg-sky text-white'
+                              ? 'bg-sky text-ink'
                               : 'bg-cream-dark text-cocoa hover:bg-honey-light'
                           }`}
                         >
@@ -904,7 +894,7 @@ export function AudioPlayer({
                           }}
                           className={`py-2.5 rounded-xl text-sm font-medium transition-colors ${
                             sleepTimer === option.value
-                              ? 'bg-lavender text-white'
+                              ? 'bg-lavender text-ink'
                               : 'bg-cream-dark text-cocoa hover:bg-honey-light'
                           }`}
                         >
@@ -952,7 +942,7 @@ export function AudioPlayer({
                       disabled={!ch.hasRecording || ch.isCurrentChapter}
                       className={`w-full p-3 rounded-xl text-left flex items-center gap-3 transition-colors ${
                         ch.isCurrentChapter
-                          ? 'bg-sky text-white'
+                          ? 'bg-sky text-ink'
                           : ch.hasRecording
                           ? 'bg-cream-dark/50 hover:bg-cream-dark text-cocoa'
                           : 'bg-cream/50 text-cocoa-light opacity-50 cursor-not-allowed'
@@ -960,7 +950,7 @@ export function AudioPlayer({
                     >
                       <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-display text-sm ${
                         ch.isCurrentChapter
-                          ? 'bg-white/20'
+                          ? 'bg-white/40'
                           : ch.hasRecording
                           ? 'bg-sky-light'
                           : 'bg-cream-dark'
@@ -968,11 +958,11 @@ export function AudioPlayer({
                         {ch.chapter_number}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className={`font-medium truncate ${ch.isCurrentChapter ? 'text-white' : ''}`}>
+                        <p className={`font-medium truncate ${ch.isCurrentChapter ? 'text-ink' : ''}`}>
                           {ch.title}
                         </p>
                         {ch.isCurrentChapter && (
-                          <p className="text-xs text-white/80">Nu aan het luisteren</p>
+                          <p className="text-xs text-ink/80">Nu aan het luisteren</p>
                         )}
                         {!ch.hasRecording && (
                           <p className="text-xs">Nog niet ingelezen</p>

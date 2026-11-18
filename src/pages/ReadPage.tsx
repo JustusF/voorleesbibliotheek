@@ -1,7 +1,7 @@
 import { useState, useEffect, useReducer, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { Button, CloudDecoration, Avatar, Card, ConfirmDialog } from '../components/ui'
+import { Button, CloudDecoration, Avatar, Card, ConfirmDialog, Icon } from '../components/ui'
 import { AudioRecorder } from '../components/AudioRecorder'
 import { FileUpload } from '../components/FileUpload'
 import { getBooks, getBook, getUsers, addRecordingAsync, addBookAsync, getOrCreateNextChapterAsync, getChaptersForBook, getRecordingsForChapter, updateChapter, getRecordingsForReader, getChapter } from '../lib/storage'
@@ -483,6 +483,13 @@ export function ReadPage() {
     return index === -1 ? steps.length : index
   }
 
+  const nextUnread = [...bookChapters]
+    .sort((a, b) => a.chapter_number - b.chapter_number)
+    .find(ch => getRecordingsForChapter(ch.id).length === 0) ?? null
+  const nextChapterNumber = nextUnread
+    ? nextUnread.chapter_number
+    : bookChapters.length > 0 ? Math.max(...bookChapters.map(c => c.chapter_number)) + 1 : 1
+
   return (
     <div className="min-h-screen p-6 md:p-8 relative overflow-hidden">
       <CloudDecoration />
@@ -531,7 +538,7 @@ export function ReadPage() {
                 <div className={`
                   w-8 h-8 md:w-10 md:h-10 rounded-full flex items-center justify-center font-display text-sm md:text-lg
                   ${getStepIndex(step) >= i
-                    ? 'bg-honey text-white'
+                    ? 'bg-honey text-ink'
                     : 'bg-cream-dark text-cocoa-light'
                   }
                 `}>
@@ -638,8 +645,8 @@ export function ReadPage() {
 
                         return (
                           <div key={recording.id} className="flex items-center gap-3 p-2 rounded-lg bg-cream/50">
-                            <div className="w-8 h-8 rounded-lg bg-moss/20 flex items-center justify-center text-sm">
-                              ✓
+                            <div className="w-8 h-8 shrink-0 rounded-lg bg-moss/40 text-ink flex items-center justify-center">
+                              <Icon name="check" className="w-4 h-4" />
                             </div>
                             <div className="flex-1 min-w-0">
                               <p className="font-medium text-cocoa text-sm truncate">
@@ -666,11 +673,11 @@ export function ReadPage() {
                 onClick={() => dispatch({ type: 'SET_BOOK_MODE', mode: 'new' })}
                 className="w-full p-5 bg-gradient-to-r from-honey to-honey-dark rounded-[20px] shadow-soft hover:shadow-lifted text-left flex items-center gap-4 transition-shadow"
               >
-                <div className="w-12 h-12 rounded-[12px] bg-white/30 flex items-center justify-center text-2xl">
-                  ➕
+                <div className="w-12 h-12 shrink-0 rounded-[12px] bg-white/40 text-ink flex items-center justify-center">
+                  <Icon name="plus" className="w-6 h-6" />
                 </div>
-                <span className="font-display text-xl text-white">Nieuw boek toevoegen</span>
-                <svg className="w-6 h-6 text-white/80 ml-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <span className="font-display text-xl text-ink">Nieuw boek toevoegen</span>
+                <svg className="w-6 h-6 text-ink/80 ml-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                 </svg>
               </motion.button>
@@ -684,8 +691,8 @@ export function ReadPage() {
                   onClick={() => handleBookSelect(book)}
                   className="w-full p-5 bg-white rounded-[20px] shadow-soft hover:shadow-lifted text-left flex items-center gap-4 transition-shadow"
                 >
-                  <div className="w-12 h-12 rounded-[12px] bg-honey-light flex items-center justify-center text-2xl">
-                    📖
+                  <div className="w-12 h-12 shrink-0 rounded-[12px] bg-honey-light text-ink flex items-center justify-center">
+                    <Icon name="book" className="w-6 h-6" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <span className="font-display text-xl text-cocoa block">{book.title}</span>
@@ -713,7 +720,6 @@ export function ReadPage() {
           >
             <Card hoverable={false} className="p-6">
               <div className="text-center mb-6">
-                <div className="text-4xl mb-2">📚</div>
                 <h2 className="font-display text-xl text-cocoa">Nieuw boek toevoegen</h2>
                 <p className="text-cocoa-light text-sm mt-2">
                   Je kunt direct beginnen met opnemen. Hoofdstukken worden automatisch aangemaakt.
@@ -795,29 +801,41 @@ export function ReadPage() {
           >
             {selectedBook && (
               <div className="flex items-center gap-3 mb-6 p-3 bg-white/50 rounded-xl">
-                <div className="w-10 h-10 rounded-[10px] bg-honey-light flex items-center justify-center text-xl">
-                  📖
+                <div className="w-10 h-10 shrink-0 rounded-[10px] bg-honey-light text-ink flex items-center justify-center">
+                  <Icon name="book" className="w-5 h-5" />
                 </div>
-                <span className="text-cocoa">Boek: <strong>{selectedBook.title}</strong></span>
+                <span className="text-cocoa flex-1 min-w-0"><strong>{selectedBook.title}</strong></span>
+                <button
+                  onClick={handleBack}
+                  className="shrink-0 px-3 text-sm text-cocoa-light underline"
+                >
+                  Ander boek
+                </button>
               </div>
             )}
 
             <div className="space-y-3">
-              {/* Add new chapter button - always visible at top */}
+              {/* The one obvious next step: the first chapter nobody has read yet,
+                  or a new chapter when everything is recorded */}
               <motion.button
-                whileHover={{ scale: 1.02, x: 4 }}
                 whileTap={{ scale: 0.98 }}
-                onClick={handleNewChapter}
+                onClick={() => (nextUnread ? handleChapterSelect(nextUnread) : handleNewChapter())}
                 className="w-full p-5 bg-gradient-to-r from-honey to-honey-dark rounded-[20px] shadow-soft hover:shadow-lifted text-left flex items-center gap-4 transition-shadow"
               >
-                <div className="w-12 h-12 rounded-[12px] bg-white/30 flex items-center justify-center text-2xl">
-                  ➕
+                <div className="w-12 h-12 shrink-0 rounded-[12px] bg-white/40 text-ink flex items-center justify-center">
+                  <Icon name="mic" className="w-6 h-6" />
                 </div>
                 <div>
-                  <span className="font-display text-xl text-white block">Nieuw hoofdstuk</span>
-                  <span className="text-white/80 text-sm">Automatisch genummerd</span>
+                  <span className="font-display text-xl text-ink block">
+                    Hoofdstuk {nextChapterNumber} voorlezen
+                  </span>
+                  <span className="text-ink/80 text-sm">
+                    {nextUnread && !/^hoofdstuk\s*\d+$/i.test(nextUnread.title.trim())
+                      ? nextUnread.title
+                      : 'Het volgende hoofdstuk'}
+                  </span>
                 </div>
-                <svg className="w-6 h-6 text-white/80 ml-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg className="w-6 h-6 text-ink/80 ml-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                 </svg>
               </motion.button>
@@ -831,9 +849,9 @@ export function ReadPage() {
                     const recordedCount = sortedChapters.filter(ch => getRecordingsForChapter(ch.id).length > 0).length
                     return (
                       <div className="flex items-center gap-3 mb-4 px-1">
-                        <p className="text-cocoa-light text-base flex-1">Of voeg audio toe aan een bestaand hoofdstuk:</p>
+                        <p className="text-cocoa-light text-base flex-1">Of kies een bestaand hoofdstuk</p>
                         <span className="text-sm text-cocoa-light bg-white/60 px-3 py-1 rounded-full">
-                          {recordedCount}/{sortedChapters.length} ingelezen
+                          {recordedCount} van {sortedChapters.length} voorgelezen
                         </span>
                       </div>
                     )
@@ -846,9 +864,8 @@ export function ReadPage() {
                       ? recordings.map(r => users.find(u => u.id === r.reader_id)?.name).filter(Boolean)
                       : []
                     const durationSec = hasRecording ? recordings[0].duration_seconds : 0
-                    const durationText = durationSec > 0
-                      ? `${Math.floor(durationSec / 60)}:${(durationSec % 60).toString().padStart(2, '0')}`
-                      : ''
+                    const durationText = durationSec > 0 ? `${Math.max(1, Math.round(durationSec / 60))} min` : ''
+                    const genericTitle = /^hoofdstuk\s*\d+$/i.test(chapter.title.trim())
 
                     if (isEditing) {
                       return (
@@ -882,60 +899,44 @@ export function ReadPage() {
                     }
 
                     return (
-                      <motion.div
+                      <div
                         key={chapter.id}
-                        whileHover={{ scale: 1.01 }}
-                        className="w-full p-5 bg-white rounded-[20px] shadow-soft hover:shadow-lifted flex items-center gap-4 transition-shadow mb-3"
+                        className="w-full p-4 bg-white rounded-[20px] shadow-soft hover:shadow-lifted flex items-center gap-2 transition-shadow mb-3"
                       >
                         <button
                           onClick={() => handleChapterSelect(chapter)}
-                          className="flex-1 flex items-center gap-4 text-left"
+                          className="flex-1 min-w-0 flex items-center gap-4 text-left cursor-pointer"
                         >
-                          <div className={`w-14 h-14 rounded-[14px] flex items-center justify-center font-display text-2xl ${hasRecording ? 'bg-moss/20 text-moss' : 'bg-sky-light text-cocoa'}`}>
-                            {hasRecording ? '✓' : chapter.chapter_number}
-                          </div>
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2">
-                              <span className="font-display text-xl text-cocoa">{chapter.title}</span>
-                              {!hasRecording && (
-                                <span className="text-xs text-cocoa-light bg-cream-dark px-2 py-0.5 rounded-full">
-                                  {chapter.chapter_number}
-                                </span>
-                              )}
-                            </div>
+                          <div className={`relative shrink-0 w-14 h-14 rounded-[14px] flex items-center justify-center font-display text-2xl text-cocoa ${hasRecording ? 'bg-moss/40' : 'bg-sky-light'}`}>
+                            {chapter.chapter_number}
                             {hasRecording && (
-                              <div className="flex items-center gap-2 mt-0.5">
-                                <span className="text-sm text-moss">
-                                  {readerNames.join(', ')}
-                                </span>
-                                {durationText && (
-                                  <span className="text-xs text-cocoa-light">
-                                    · {durationText}
-                                  </span>
-                                )}
-                              </div>
+                              <span className="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-moss text-ink flex items-center justify-center">
+                                <Icon name="check" className="w-4 h-4" />
+                              </span>
                             )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-display text-lg leading-snug text-cocoa line-clamp-2">
+                              {genericTitle ? `Hoofdstuk ${chapter.chapter_number}` : chapter.title}
+                            </p>
+                            <p className="text-sm text-cocoa-light truncate">
+                              {hasRecording
+                                ? [readerNames.join(', '), durationText].filter(Boolean).join(' · ')
+                                : 'Nog niet voorgelezen'}
+                            </p>
                           </div>
                         </button>
                         {/* Edit button */}
                         <button
                           onClick={(e) => handleEditChapter(chapter, e)}
-                          className="p-3 rounded-xl hover:bg-cream-dark transition-colors"
-                          title="Titel bewerken"
+                          className="shrink-0 p-3 rounded-xl hover:bg-cream-dark transition-colors cursor-pointer"
+                          aria-label={`Titel van hoofdstuk ${chapter.chapter_number} bewerken`}
                         >
                           <svg className="w-6 h-6 text-cocoa-light" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                           </svg>
                         </button>
-                        <button
-                          onClick={() => handleChapterSelect(chapter)}
-                          className="p-3 rounded-xl hover:bg-cream-dark transition-colors"
-                        >
-                          <svg className="w-6 h-6 text-cocoa-light" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                          </svg>
-                        </button>
-                      </motion.div>
+                      </div>
                     )
                   })}
                 </div>

@@ -24,55 +24,17 @@ function ResumeCard({ item, listener, onPlay }: { item: ResumeItem; listener: Us
         <span className="block text-sm text-cocoa-light">
           {item.isNextChapter ? 'Volgende hoofdstuk' : 'Verder luisteren'}, {listener.name}
         </span>
-        <span className="block font-display text-xl text-cocoa truncate">{item.book.title}</span>
+        <span className="block font-display text-xl leading-snug text-cocoa line-clamp-2">{item.book.title}</span>
         <span className="block text-sm text-cocoa-light">
           {item.chapter.title} · {item.reader.name} leest voor
         </span>
       </span>
-      <span className="shrink-0 w-12 h-12 rounded-full bg-sky text-white flex items-center justify-center" aria-hidden="true">
+      <span className="shrink-0 w-12 h-12 rounded-full bg-sky text-ink flex items-center justify-center" aria-hidden="true">
         <svg className="w-7 h-7 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
           <path d="M8 5v14l11-7z" />
         </svg>
       </span>
     </motion.button>
-  )
-}
-
-// Floating stars decoration
-function FloatingStars() {
-  const stars = [
-    { x: '10%', y: '15%', delay: 0, size: 'text-lg' },
-    { x: '85%', y: '20%', delay: 0.5, size: 'text-xl' },
-    { x: '15%', y: '70%', delay: 1, size: 'text-base' },
-    { x: '90%', y: '75%', delay: 1.5, size: 'text-lg' },
-    { x: '50%', y: '10%', delay: 2, size: 'text-sm' },
-    { x: '75%', y: '60%', delay: 0.8, size: 'text-base' },
-    { x: '25%', y: '85%', delay: 1.2, size: 'text-lg' },
-  ]
-
-  return (
-    <>
-      {stars.map((star, i) => (
-        <motion.div
-          key={i}
-          className={`absolute ${star.size} pointer-events-none select-none`}
-          style={{ left: star.x, top: star.y }}
-          initial={{ opacity: 0, scale: 0 }}
-          animate={{
-            opacity: [0.2, 0.6, 0.2],
-            scale: [0.8, 1.1, 0.8],
-          }}
-          transition={{
-            duration: 3,
-            delay: star.delay,
-            repeat: Infinity,
-            ease: 'easeInOut',
-          }}
-        >
-          ✨
-        </motion.div>
-      ))}
-    </>
   )
 }
 
@@ -122,18 +84,6 @@ function AnimatedBookIcon() {
         >
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
         </motion.svg>
-
-        {/* Sparkle on corner */}
-        <motion.div
-          className="absolute -top-2 -right-2 text-2xl"
-          animate={{
-            scale: [0, 1, 0],
-            rotate: [0, 180, 360],
-          }}
-          transition={{ duration: 2, repeat: Infinity, delay: 1 }}
-        >
-          ⭐
-        </motion.div>
       </motion.div>
     </motion.div>
   )
@@ -154,7 +104,6 @@ export function HomePage() {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-8 relative overflow-hidden">
       <CloudDecoration />
-      <FloatingStars />
 
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -224,7 +173,6 @@ export function HomePage() {
                 {resume ? 'Kies een ander boek' : 'Beluister opnames'}
               </span>
             </Button>
-
           </motion.div>
 
           <motion.div
@@ -281,52 +229,11 @@ export function HomePage() {
             <p className="text-sm text-cocoa-light font-medium">{FAMILY_NAME}</p>
             <div className="w-8 h-px bg-gradient-to-l from-transparent to-cocoa-light/30" />
           </div>
-          <p className="text-xs text-cocoa-light/50 italic">Mogelijk gemaakt vanuit Kenia</p>
-          <p className="text-xs text-cocoa-light/30 mt-2">v{__APP_VERSION__}</p>
+          <p className="text-xs text-cocoa-light italic">Mogelijk gemaakt vanuit Kenia</p>
+          <p className="text-xs text-cocoa-light/70 mt-2">v{__APP_VERSION__}</p>
         </motion.div>
       </motion.div>
 
-      {/* Enhanced decorative elements */}
-      <motion.div
-        animate={{
-          y: [0, -15, 0],
-          rotate: [0, 5, 0],
-        }}
-        transition={{ duration: 5, repeat: Infinity, ease: 'easeInOut' }}
-        className="absolute bottom-8 left-8 text-5xl opacity-25"
-      >
-        📚
-      </motion.div>
-      <motion.div
-        animate={{
-          y: [0, -12, 0],
-          rotate: [0, -5, 0],
-        }}
-        transition={{ duration: 6, repeat: Infinity, ease: 'easeInOut', delay: 1 }}
-        className="absolute bottom-12 right-12 text-4xl opacity-25"
-      >
-        🎧
-      </motion.div>
-      <motion.div
-        animate={{
-          y: [0, -8, 0],
-          x: [0, 5, 0],
-        }}
-        transition={{ duration: 7, repeat: Infinity, ease: 'easeInOut', delay: 2 }}
-        className="absolute top-1/3 left-12 text-3xl opacity-20 hidden md:block"
-      >
-        🌙
-      </motion.div>
-      <motion.div
-        animate={{
-          scale: [1, 1.1, 1],
-          rotate: [0, 10, 0],
-        }}
-        transition={{ duration: 4, repeat: Infinity, ease: 'easeInOut', delay: 0.5 }}
-        className="absolute top-1/4 right-16 text-2xl opacity-20 hidden md:block"
-      >
-        💫
-      </motion.div>
     </div>
   )
 }

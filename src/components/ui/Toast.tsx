@@ -54,9 +54,9 @@ function ToastItem({ toast, onRemove }: { toast: Toast; onRemove: (id: string) =
   }, [toast.id, toast.duration, onRemove])
 
   const bgColor = {
-    info: 'bg-sky text-white',
+    info: 'bg-sky text-ink',
     error: 'bg-sunset text-white',
-    success: 'bg-moss text-white',
+    success: 'bg-moss text-ink',
   }[toast.type]
 
   const icon = {

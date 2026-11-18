@@ -126,7 +126,7 @@ export function FormModal({
             flex-1 px-4 py-3 rounded-xl font-medium transition-colors
             ${isConfirmDisabled || isLoading
               ? 'bg-cream-dark text-cocoa-light cursor-not-allowed'
-              : 'bg-honey text-white hover:bg-honey-dark'
+              : 'bg-honey text-ink hover:bg-honey-dark'
             }
           `}
         >
@@ -192,7 +192,7 @@ export function ConfirmDialog({
             flex-1 px-4 py-3 rounded-xl font-medium transition-colors
             ${variant === 'danger'
               ? 'bg-sunset text-white hover:bg-sunset/90'
-              : 'bg-honey text-white hover:bg-honey-dark'
+              : 'bg-honey text-ink hover:bg-honey-dark'
             }
           `}
         >

@@ -1,12 +1,13 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion, AnimatePresence, MotionConfig } from 'framer-motion'
 import { HomePage } from './pages/HomePage'
 import { AppProvider, useSyncStatus, useSyncErrors } from './context/AppContext'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { StorageWarning } from './components/StorageWarning'
 import { RealtimeNotifier } from './components/RealtimeNotifier'
 import { ToastProvider } from './components/ui'
+import { isSupabaseConfigured } from './lib/supabase'
 
 // Lazy-load pages that aren't immediately needed
 const ListenPage = lazy(() => import('./pages/ListenPage').then(m => ({ default: m.ListenPage })))
@@ -45,7 +46,7 @@ function SyncIndicator({ status, isOnline }: { status: SyncStatus; isOnline: boo
         <div className={`
           flex items-center gap-2 px-4 py-2 rounded-full shadow-soft text-sm
           ${displayStatus === 'syncing' ? 'bg-sky-light text-cocoa' : ''}
-          ${displayStatus === 'success' ? 'bg-moss text-white' : ''}
+          ${displayStatus === 'success' ? 'bg-moss text-ink' : ''}
           ${displayStatus === 'error' ? 'bg-sunset text-white' : ''}
           ${displayStatus === 'offline' ? 'bg-cream-dark text-cocoa-light' : ''}
         `}>
@@ -120,7 +121,15 @@ function SyncErrorBanner() {
 }
 
 function AppContent() {
-  const { isOnline, syncStatus } = useSyncStatus()
+  const { isOnline, syncStatus, isLoading } = useSyncStatus()
+  // On a device that has never opened the app there is nothing in localStorage
+  // yet. Wait for the first sync, otherwise a personal reader link opens on
+  // "Wie ben jij?" because the reader is not known yet.
+  const [firstVisit] = useState(
+    () => isSupabaseConfigured && localStorage.getItem('voorleesbibliotheek_books') === null
+  )
+
+  if (firstVisit && isLoading) return <PageLoader />
 
   return (
     <>
@@ -142,6 +151,7 @@ function AppContent() {
 function App() {
   return (
     <ErrorBoundary>
+      <MotionConfig reducedMotion="user">
       <AppProvider>
         <ToastProvider>
           <BrowserRouter>
@@ -150,6 +160,7 @@ function App() {
           </BrowserRouter>
         </ToastProvider>
       </AppProvider>
+      </MotionConfig>
     </ErrorBoundary>
   )
 }

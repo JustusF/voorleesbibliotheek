@@ -1,4 +1,5 @@
 /* eslint-disable react-refresh/only-export-components, react-hooks/set-state-in-effect */
+import { Icon } from '../../components/ui'
 import { useState, useEffect, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
@@ -269,7 +270,7 @@ export function PinGate({ onUnlock }: { onUnlock: () => void }) {
         animate={{ opacity: 1, y: 0 }}
         className="w-full max-w-xs text-center"
       >
-        <div className="text-5xl mb-4">🔒</div>
+        <Icon name="lock" className="w-12 h-12 mx-auto mb-4 text-cocoa-light" />
         <h1 className="font-display text-2xl text-cocoa mb-2">
           {isSetup
             ? step === 'enter' ? 'Kies een pincode' : 'Bevestig pincode'

@@ -296,7 +296,7 @@ export function ChapterList({ book, users, onBack, onEditBook }: ChapterListProp
                   Scannen...
                 </>
               ) : (
-                <>📷 Scan inhoudsopgave</>
+                <>Scan inhoudsopgave</>
               )}
             </Button>
             <span className="text-sm text-cocoa-light">

@@ -12,7 +12,7 @@ interface ButtonProps extends Omit<HTMLMotionProps<'button'>, 'ref'> {
 
 const variantStyles: Record<ButtonVariant, string> = {
   primary: `
-    bg-gradient-to-br from-honey via-honey to-honey-dark text-white
+    bg-gradient-to-br from-honey via-honey to-honey-dark text-ink
     hover:from-honey-dark hover:via-honey hover:to-honey
     shadow-soft hover:shadow-lifted
     border-2 border-honey-dark/20
@@ -29,7 +29,7 @@ const variantStyles: Record<ButtonVariant, string> = {
     border-2 border-transparent
   `,
   play: `
-    bg-gradient-to-br from-sky via-sky to-sky-light text-white
+    bg-gradient-to-br from-sky via-sky to-sky-light text-ink
     hover:from-sky-light hover:via-sky hover:to-sky
     shadow-lifted hover:shadow-floating
     border-2 border-sky/30
@@ -54,7 +54,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     return (
       <motion.button
         ref={ref}
-        whileHover={{ scale: 1.02, y: -2 }}
+        whileHover={{ y: -2 }}
         whileTap={{ scale: 0.98 }}
         transition={{ type: 'spring', stiffness: 400, damping: 17 }}
         className={`

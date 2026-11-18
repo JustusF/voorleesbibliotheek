@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { Button, Card, ConfirmDialog } from '../../components/ui'
+import { Button, Card, ConfirmDialog, Icon } from '../../components/ui'
 import {
   getBooks,
   getChaptersForBook,
@@ -95,7 +95,6 @@ export function BookManager({ users, onBooksChanged }: BookManagerProps) {
 
         {books.length === 0 ? (
           <Card hoverable={false} className="p-8 text-center">
-            <div className="text-5xl mb-4">📚</div>
             <p className="text-cocoa-light mb-4">
               Voeg je eerste boek toe om te beginnen met voorlezen!
             </p>
@@ -112,8 +111,8 @@ export function BookManager({ users, onBooksChanged }: BookManagerProps) {
                 animate={{ opacity: 1, y: 0 }}
               >
                 <Card className="p-4 flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-xl bg-honey-light flex items-center justify-center text-2xl">
-                    📖
+                  <div className="w-12 h-12 shrink-0 rounded-xl bg-honey-light text-ink flex items-center justify-center">
+                    <Icon name="book" className="w-6 h-6" />
                   </div>
                   <div className="flex-1">
                     <p className="font-display text-lg text-cocoa">{book.title}</p>

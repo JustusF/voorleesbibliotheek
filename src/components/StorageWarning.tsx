@@ -60,7 +60,7 @@ export function StorageWarning() {
             </p>
             {usage.criticalLevel && (
               <p className="text-sm text-red-600 mt-2 font-medium">
-                ⚠️ Nieuwe opnames worden geblokkeerd. Ga naar Admin → verwijder oude opnames.
+                Nieuwe opnames worden geblokkeerd. Ga naar Admin → verwijder oude opnames.
               </p>
             )}
             {!usage.criticalLevel && usage.nearLimit && (
